@@ -20,7 +20,7 @@ The port openings are 13.5 × 8 mm, enough for the grip of a normal USB-C plug t
 
 Print `stl/frame.stl` front face down, `stl/body.stl` as exported (rails on the bed), `stl/back.stl` outer face down, and `stl/leg.stl` twice. No supports.
 
-The body is 210 × 130 mm, so you need a bed of roughly 215 × 135 or bigger; an A1 mini is too small. I'd use PETG so it doesn't go soft in a sunny window, but PLA is fine. 0.2 mm layers, 3 walls and 25 % infill work, and the whole thing takes about 130–150 g.
+The body is 210 × 130 mm, so you need a bed of roughly 215 × 135 or bigger; an A1 mini is too small. I'd use PETG so it doesn't go soft in a sunny window, but PLA is fine. 0.2 mm layers, 3 walls and 25 % infill work, and the whole thing takes about 150–170 g of filament and roughly 4–5 hours on a fast printer (Bambu, Prusa MK4), 8–10 on an older one.
 
 ## Hardware
 
