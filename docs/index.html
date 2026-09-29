@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notta mihinä se lentää? · live flight-tracking display</title>
+<meta name="description" content="A live flight-tracking display for the Waveshare ESP32-S3-Touch-LCD-7: touch map, routes, flight data and aircraft photos.">
+<meta property="og:title" content="Notta mihinä se lentää?">
+<meta property="og:description" content="A live flight-tracking display for the Waveshare ESP32-S3-Touch-LCD-7.">
+<meta property="og:image" content="https://n41kh05.github.io/notta-mihina-se-lentaa/img/social.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23162442'/%3E%3Cpath d='M16 5l2.2 8.5 8.8 4.5v2.4l-8.8-2.2-.6 5.6 2.9 2.2v1.9L16 26.8l-4.5 1.1v-1.9l2.9-2.2-.6-5.6L5 20.4V18l8.8-4.5z' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+:root {
+  --navy: #162442; --accent: #e23a5e; --bg: #f5f6f9; --card: #ffffff; --text: #1c202c;
+  --text2: #5d6475; --line: #dde1e8; --chip: #eef1f6;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0e131d; --card: #171e2b; --text: #e9ecf2; --text2: #a2a9b8; --line: #283246; --chip: #1f2838; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
+a { color: inherit; }
+img { max-width: 100%; height: auto; display: block; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+/* hero */
+.hero { background: var(--navy); color: #fff; padding: 56px 0 64px; overflow: hidden; }
+.hero .wrap { display: grid; grid-template-columns: 1fr 1.25fr; gap: 40px; align-items: center; }
+.hero h1 { font-size: clamp(38px, 5.6vw, 60px); line-height: 1.05; margin: 0 0 12px; letter-spacing: -0.5px; }
+.hero .dialect { font-style: italic; color: #c6d0e4; margin: 0 0 20px; }
+.hero .lede { font-size: 19px; color: #e3e8f2; margin: 0 0 28px; max-width: 32em; }
+.btns { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn { display: inline-block; padding: 12px 20px; border-radius: 10px; font-weight: 700; text-decoration: none; }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.ghost { border: 1.5px solid rgba(255,255,255,.45); color: #fff; }
+.btn:hover { filter: brightness(1.08); }
+.hero img { filter: drop-shadow(0 18px 30px rgba(0,0,0,.35)); }
+
+/* sections */
+section { padding: 64px 0 8px; }
+h2 { font-size: 30px; margin: 0 0 8px; letter-spacing: -0.3px; }
+.sub { color: var(--text2); margin: 0 0 32px; max-width: 42em; }
+.feature { display: grid; grid-template-columns: 1.1fr 1fr; gap: 36px; align-items: center; margin: 0 0 48px; }
+.feature:nth-child(even) .shot { order: 2; }
+.shot { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 8px 28px rgba(10,20,40,.12); background: #000; }
+.shot.phone { max-width: 260px; justify-self: center; border-radius: 22px; }
+.feature h3 { font-size: 22px; margin: 0 0 8px; }
+.feature p { margin: 0 0 10px; color: var(--text2); }
+.feature p b { color: var(--text); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+.card h3 { margin: 0 0 6px; font-size: 18px; }
+.card p { margin: 0; color: var(--text2); font-size: 16px; }
+
+ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+ol.steps li { counter-increment: s; background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 20px 16px 64px; position: relative; }
+ol.steps li::before { content: counter(s); position: absolute; left: 18px; top: 14px; width: 30px; height: 30px;
+  border-radius: 50%; background: var(--navy); color: #fff; font-weight: 700; display: grid; place-items: center; }
+@media (prefers-color-scheme: dark) { ol.steps li::before { background: #3a5a9a; } }
+code { background: var(--chip); padding: 1px 6px; border-radius: 5px; font-size: .92em; }
+
+.case { display: grid; grid-template-columns: 1.2fr 1fr; gap: 36px; align-items: center; }
+.case .shot { background: #fff; }
+
+.alt { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 15px; color: var(--text2); }
+.alt .bar { width: 220px; max-width: 60vw; height: 10px; border-radius: 5px;
+  background: linear-gradient(90deg, #e24c28, #f28a1e, #e8be1e, #6eb438, #20a08c, #2870d6, #7642ce); }
+
+footer { margin-top: 72px; padding: 32px 0 48px; border-top: 1px solid var(--line); color: var(--text2); font-size: 15px; }
+footer p { margin: 0 0 8px; }
+
+@media (max-width: 820px) {
+  .hero .wrap, .feature, .case { grid-template-columns: 1fr; }
+  .feature:nth-child(even) .shot { order: 0; }
+  .hero { padding: 40px 0 44px; }
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div>
+      <h1>Notta mihinä se lentää?</h1>
+      <p class="dialect">Finnish for “So, where's that one flying to?”</p>
+      <p class="lede">A live flight-tracking display for the Waveshare ESP32-S3-Touch-LCD-7. Aircraft around your location on a touch map, with route, flight data and aircraft photos.</p>
+      <div class="btns">
+        <a class="btn primary" href="simulator.html?v=10">▶ Try the demo</a>
+        <a class="btn ghost" href="https://github.com/N41KH05/notta-mihina-se-lentaa">View on GitHub</a>
+      </div>
+    </div>
+    <img src="img/hero.png" width="1016" height="696" alt="The device showing a selected flight: route Stockholm to Oulu, altitude, speed and a photo card">
+  </div>
+</header>
+
+<main>
+<section class="wrap" id="features">
+  <h2>Features</h2>
+  <p class="sub">One off-the-shelf board, a Wi-Fi connection and free community flight data. No subscriptions and no soldering. The user interface is in English, with Finnish as an option.</p>
+
+  <div class="feature">
+    <img class="shot" src="img/map.png" width="800" height="480" alt="Live map around home with planes and range rings" loading="lazy">
+    <div>
+      <h3>Live map</h3>
+      <p>Aircraft positions update every four seconds and are interpolated between updates. The embedded map covers coastlines, lakes, towns, airports and runways. <b>Pan and pinch-zoom</b> from airport level to the whole world.</p>
+      <div class="alt"><span>Colour = altitude:</span><span>ground</span><span class="bar" aria-hidden="true"></span><span>cruise</span></div>
+    </div>
+  </div>
+
+  <div class="feature">
+    <img class="shot" src="img/selected.png" width="800" height="480" alt="A selected plane with its route, details and photo card" loading="lazy">
+    <div>
+      <h3>Flight details</h3>
+      <p>Selecting an aircraft shows the <b>route</b>, estimated arrival, altitude, vertical rate, ground speed, track, distance and aircraft type.</p>
+      <p>An <b>aircraft photo</b> is loaded from Planespotters.net, with photographer credit and a QR link to the source page.</p>
+    </div>
+  </div>
+
+  <div class="feature">
+    <img class="shot" src="img/zoomout.png" width="800" height="480" alt="Zoomed out over Finland and Sweden with place names" loading="lazy">
+    <div>
+      <h3>Localisation</h3>
+      <p>The interface and map labels are in <b>English or Finnish</b>, each with its own number formatting. The language is switched in Settings or on the phone page.</p>
+      <p>Selectable <b>units</b>: km or nautical miles, km/h or knots, feet or metres.</p>
+    </div>
+  </div>
+
+  <div class="feature">
+    <img class="shot" src="img/home_pick.png" width="800" height="480" alt="Setting home: a crosshair on the map after an address search" loading="lazy">
+    <div>
+      <h3>Home location setup</h3>
+      <p>On first start the device asks for the home location. Addresses are resolved with <b>OpenStreetMap Nominatim</b>, with an offline fallback to the built-in town list.</p>
+      <p>The result is then fine-tuned on the map with a crosshair.</p>
+    </div>
+  </div>
+
+  <div class="feature">
+    <img class="shot phone" src="img/phone.png" width="780" height="1688" alt="The settings page on a phone" loading="lazy">
+    <div>
+      <h3>Configuration</h3>
+      <p>Wi-Fi is configured on the touchscreen with an on-screen keyboard.</p>
+      <p>Further options are available on a <b>web settings page</b> served on the local network: home location, night schedule, photos and an optional AirLabs API key for scheduled times. The page address and a QR code are shown in the device settings.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap" id="reliable">
+  <h2>Reliability</h2>
+  <p class="sub">Designed for long-term unattended operation.</p>
+  <div class="cards">
+    <div class="card"><h3>Network recovery</h3><p>Automatic reconnection with back-off after power or network outages.</p></div>
+    <div class="card"><h3>Watchdog</h3><p>A 90-second task watchdog, plus a scheduled daily restart during idle night hours.</p></div>
+    <div class="card"><h3>Night mode</h3><p>Configurable schedule: the screen switches off at night and back on in the morning. Touch wakes it.</p></div>
+    <div class="card"><h3>Persistent settings</h3><p>All settings are stored in flash and survive power loss and firmware updates.</p></div>
+  </div>
+</section>
+
+<section class="wrap" id="build">
+  <h2>Getting started</h2>
+  <p class="sub">No soldering or additional wiring is required.</p>
+  <ol class="steps">
+    <li><b>Hardware:</b> a <a href="https://www.waveshare.com/esp32-s3-touch-lcd-7.htm">Waveshare ESP32-S3-Touch-LCD-7</a> (capacitive touch version), a USB-C cable and a 5 V, 1 A power supply.</li>
+    <li><b>Toolchain:</b> Arduino IDE 2 with the Espressif ESP32 board package (3.x) and the libraries Adafruit GFX, ArduinoJson and JPEGDEC.</li>
+    <li><b>Build and upload</b> <code>SkyTracker/SkyTracker.ino</code> with the board options from the guide (16 MB flash, OPI PSRAM, custom partitions).</li>
+    <li><b>First start:</b> select a Wi-Fi network and set the home location on the device.</li>
+  </ol>
+  <p style="margin-top:20px"><a class="btn primary" href="https://github.com/N41KH05/notta-mihina-se-lentaa/blob/main/GUIDE.md">Installation guide</a></p>
+</section>
+
+<section class="wrap" id="case">
+  <h2>Enclosure</h2>
+  <div class="case">
+    <img class="shot" src="img/case.png" width="1800" height="1400" alt="Renders of the 3D-printed case from the front, back and side, with the USB-C openings in the side wall" loading="lazy">
+    <div>
+      <p>A 3D-printable, fully enclosed case with two fold-out legs that hold the display at a 20° tilt.</p>
+      <p>The electronics are fully enclosed, with only narrow ventilation slots at the back. The USB-C ports are reached through openings in the side wall, so the cable plugs straight in. It prints without supports, and the design is a parametric OpenSCAD model that can be adjusted to your board.</p>
+      <p><a href="https://github.com/N41KH05/notta-mihina-se-lentaa/tree/main/case">Enclosure files and print guide →</a></p>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><b>Data:</b> live positions from <a href="https://adsb.fi">adsb.fi</a>, <a href="https://airplanes.live">airplanes.live</a> and <a href="https://adsb.lol">adsb.lol</a>, routes from <a href="https://www.adsbdb.com">adsbdb</a>, photos from <a href="https://www.planespotters.net">Planespotters.net</a>, optional timetables from <a href="https://airlabs.co">AirLabs</a>, address search from <a href="https://nominatim.org">Nominatim</a> (© OpenStreetMap contributors). The map is from <a href="https://www.naturalearthdata.com">Natural Earth</a> and airports from <a href="https://ourairports.com">OurAirports</a>.</p>
+    <p>Code released under the MIT License. Not affiliated with Waveshare or any of the data services.</p>
+  </div>
+</footer>
+</body>
+</html>

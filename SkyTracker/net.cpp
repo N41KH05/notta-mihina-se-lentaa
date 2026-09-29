@@ -1,0 +1,450 @@
+// Live data: plane positions from adsb.fi / airplanes.live / adsb.lol,
+// flight routes from adsbdb.com.
+#include "net.h"
+#include "traffic.h"
+#include <esp_task_wdt.h>
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <JPEGDEC.h>
+#include "photo.h"
+
+#define LOCK(l) xSemaphoreTake((SemaphoreHandle_t)(l), portMAX_DELAY)
+#define UNLOCK(l) xSemaphoreGive((SemaphoreHandle_t)(l))
+
+namespace {
+
+struct Source { const char* name; const char* url; };
+const Source SOURCES[] = API_SOURCES;
+const int N_SOURCES = sizeof(SOURCES) / sizeof(SOURCES[0]);
+int sourceIdx = 0;
+uint32_t lastRequest = 0;
+
+// Let ArduinoJson use the big PSRAM instead of the small internal RAM.
+struct PsramAllocator : ArduinoJson::Allocator {
+  void* allocate(size_t n) override { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM); }
+  void deallocate(void* p) override { heap_caps_free(p); }
+  void* reallocate(void* p, size_t n) override { return heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM); }
+} psram;
+
+Plane* incoming = nullptr;     // second buffer the new report is assembled in
+
+void politeWait() {             // the services allow about 1 request per second
+  esp_task_wdt_reset();         // each request is a step forward: feed the watchdog
+  uint32_t since = millis() - lastRequest;
+  if (since < 1200) delay(1200 - since);
+  lastRequest = millis();
+}
+
+// GET url and parse JSON (through filter). Returns HTTP status, or <0 on failure.
+int getJson(const char* url, JsonDocument& doc, JsonDocument& filter, char* err, size_t errLen,
+            const char* userAgent = nullptr) {
+  WiFiClientSecure client;
+  client.useBuiltinCACertBundle();           // verify server certificates (built-in root CA list)
+  client.setHandshakeTimeout(15);            // seconds; the default (2 min) would trip the watchdog
+  HTTPClient http;
+  http.useHTTP10(true);                      // plain body, so it can be parsed as it streams
+  http.setTimeout(12000);
+  http.setUserAgent(userAgent ? userAgent : "SkyTracker desk display (personal, non-commercial)");
+  if (!http.begin(client, url)) { snprintf(err, errLen, "%s", TR("virheellinen osoite", "invalid address")); return -1; }
+  politeWait();
+  int status = http.GET();
+  if (status == 200) {
+    DeserializationError e = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+    if (e) { snprintf(err, errLen, TR("virheellinen vastaus (%s)", "invalid response (%s)"), e.c_str()); status = -2; }
+  } else if (status > 0) {
+    snprintf(err, errLen, "HTTP %d", status);
+  } else {
+    snprintf(err, errLen, "%s", WiFi.status() == WL_CONNECTED ? TR("ei yhteyttä palvelimeen", "no connection to server") : TR("Wi-Fi ei ole yhdistetty", "Wi-Fi not connected"));
+  }
+  http.end();
+  if (status != 200) {                       // log the URL without any API key
+    const char* k = strstr(url, "api_key=");
+    Serial.printf("GET %.*s -> %s\n", k ? (int)(k - url) : (int)strlen(url), url, err);
+  }
+  return status;
+}
+
+// Planespotters asks apps to name themselves and give a contact address.
+// Filled in (under the lock) at the start of each photo fetch.
+char userAgent[160];
+const char* photoUserAgent() { return userAgent; }
+
+// Values from the flight data (callsigns, registrations, hex codes) go into request
+// URLs only if they contain nothing but letters, digits and '-'.
+bool urlSafe(const char* s) {
+  if (!*s) return false;
+  for (; *s; s++)
+    if (!isalnum((uint8_t)*s) && *s != '-') return false;
+  return true;
+}
+
+void copyStr(char* dst, size_t n, const char* src) {
+  snprintf(dst, n, "%s", src ? src : "");
+  for (int i = strlen(dst) - 1; i >= 0 && dst[i] == ' '; i--) dst[i] = 0;   // trim
+}
+
+}  // namespace
+
+void netInit() {
+  incoming = (Plane*)heap_caps_calloc(MAX_PLANES, sizeof(Plane), MALLOC_CAP_SPIRAM);
+}
+
+void netFetchPlanes(AppState& s, void* lock) {
+  // Which area? Everything the map shows (the services answer up to 250 nm).
+  LOCK(lock);
+  int radius = trafficRadiusNm(s);
+  float cx = s.cx, cy = s.cy;
+  UNLOCK(lock);
+  double lat = latFromY(cy), lon = lonFromX(cx);
+
+  JsonDocument filter;
+  trafficFilter(filter);
+
+  // Try the service that worked last time first, then the others.
+  char errors[120] = "";
+  int status = -1;
+  JsonDocument doc(&psram);
+  int used = sourceIdx;
+  for (int i = 0; i < N_SOURCES; i++) {
+    used = (sourceIdx + i) % N_SOURCES;
+    char url[160], err[48] = "";
+    snprintf(url, sizeof url, SOURCES[used].url, lat, lon, radius);
+    doc.clear();
+    status = getJson(url, doc, filter, err, sizeof err);
+    if (status == 200) break;
+    size_t n = strlen(errors);
+    snprintf(errors + n, sizeof errors - n, "%s%s: %s", n ? "; " : "", SOURCES[used].name, err);  // shown on screen
+  }
+  if (status == 200 && used != sourceIdx) Serial.printf("Using %s for live data\n", SOURCES[used].name);
+  if (status == 200) sourceIdx = used;
+
+  int n = status == 200 ? trafficParse(doc, incoming, millis()) : 0;
+
+  LOCK(lock);
+  s.apiOk = status == 200;
+  snprintf(s.apiError, sizeof s.apiError, "%s", s.apiOk ? "" : errors);
+  snprintf(s.source, sizeof s.source, "%s", SOURCES[sourceIdx].name);
+  s.fetchCx = cx;
+  s.fetchCy = cy;
+  s.fetchRadiusNm = radius;
+  if (s.apiOk) {
+    trafficMerge(s, incoming, n);
+    s.updatedEpoch = time(nullptr);
+  }
+  UNLOCK(lock);
+  Serial.printf("%d planes (%s), free PSRAM %u KB\n", n, s.apiOk ? SOURCES[sourceIdx].name : "failed",
+                (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+}
+
+void netLookupRoute(AppState& s, void* lock) {
+  char cs[10] = "";
+  LOCK(lock);
+  for (auto& r : s.routes)
+    if (r.state == ROUTE_PENDING) { snprintf(cs, sizeof cs, "%s", r.cs); break; }
+  UNLOCK(lock);
+  if (!cs[0]) return;
+
+  JsonDocument filter;
+  routeFilter(filter);
+  JsonDocument doc(&psram);
+  char url[96], err[48];
+  int status = -1;
+  if (urlSafe(cs)) {
+    snprintf(url, sizeof url, "https://api.adsbdb.com/v0/callsign/%s", cs);
+    status = getJson(url, doc, filter, err, sizeof err);
+  } else {
+    status = 404;                            // not a normal callsign: no route to look up
+  }
+
+  LOCK(lock);
+  Route* r = s.route(cs);
+  if (r && r->state == ROUTE_PENDING) {
+    if (status == 200 && routeParse(doc, *r)) r->state = ROUTE_KNOWN;
+    else if (status == 404 || status == 200) r->state = ROUTE_UNKNOWN;   // no route published
+    else r->state = ROUTE_EMPTY;              // network trouble: forget it, ask again later
+  }
+  UNLOCK(lock);
+}
+
+// ---------------------------------------------------------------------------
+//  Address search for the home position: OpenStreetMap's Nominatim. Their usage
+//  policy: at most one request a second, name the app, show the attribution (the
+//  results screen does). Used only while setting home.
+// ---------------------------------------------------------------------------
+namespace {
+void urlEncode(const char* in, char* out, size_t n) {
+  size_t o = 0;
+  for (const uint8_t* p = (const uint8_t*)in; *p && o + 4 < n; p++) {
+    if (isalnum(*p) || strchr("-_.~", *p)) out[o++] = (char)*p;
+    else if (*p == ' ') out[o++] = '+';
+    else o += snprintf(out + o, n - o, "%%%02X", *p);
+  }
+  out[o] = 0;
+}
+}  // namespace
+
+int netSearchPlaces(const char* query, Place* out, int max) {
+  char q[160], url[260], err[48];
+  urlEncode(query, q, sizeof q);
+  snprintf(url, sizeof url,
+           "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=%d&accept-language=fi&q=%s", max, q);
+  JsonDocument filter;
+  nominatimFilter(filter);
+  JsonDocument doc(&psram);
+  char ua[160];
+  snprintf(ua, sizeof ua, "NottaMihinaSeLentaa/1.0 (ESP32 flight-map desk display; contact: %s)", cfg.contact);
+  if (getJson(url, doc, filter, err, sizeof err, ua) != 200) return -1;
+  int n = nominatimParse(doc, out, max);
+  Serial.printf("Place search \"%s\": %d found\n", query, n);
+  return n;
+}
+
+// ---------------------------------------------------------------------------
+//  Departure and arrival times from AirLabs (only with a key in config.h).
+// ---------------------------------------------------------------------------
+namespace {
+int16_t localMinutes(JsonVariant ts) {       // UNIX time -> local minutes past midnight
+  if (!ts.is<long>() || ts.as<long>() <= 0) return -1;
+  time_t t = ts.as<long>();
+  struct tm lt;
+  localtime_r(&t, &lt);
+  return lt.tm_hour * 60 + lt.tm_min;
+}
+int callsToday = 0, callsDay = -1;
+}  // namespace
+
+int netAirlabsCallsToday() { return callsToday; }
+
+void netLookupTimes(AppState& s, void* lock) {
+  char cs[10] = "", flight[10] = "", apiKey[sizeof cfg.airlabsKey];
+  LOCK(lock);
+  snprintf(apiKey, sizeof apiKey, "%s", cfg.airlabsKey);   // can change on the settings page
+  for (auto& r : s.routes)
+    if (r.state == ROUTE_KNOWN && r.times == TIMES_PENDING) {
+      snprintf(cs, sizeof cs, "%s", r.cs);
+      snprintf(flight, sizeof flight, "%s", r.flight);
+      break;
+    }
+  UNLOCK(lock);
+  if (!cs[0] || !apiKey[0]) return;
+
+  time_t now = time(nullptr);
+  struct tm lt;
+  localtime_r(&now, &lt);
+  if (lt.tm_yday != callsDay) { callsDay = lt.tm_yday; callsToday = 0; }
+
+  JsonDocument filter;
+  for (const char* f : {"dep_time_ts", "dep_estimated_ts", "arr_time_ts", "arr_estimated_ts"}) {
+    filter[f] = true;                        // the reply may or may not be wrapped in "response"
+    filter["response"][f] = true;
+  }
+  filter["error"]["message"] = true;
+  JsonDocument doc(&psram);
+  char url[200], err[48];
+  bool found = false, failed = false;
+  // First by the radio callsign (ICAO flight code), then by the flight number.
+  for (int attempt = 0; attempt < 2 && !found && !failed; attempt++) {
+    const char* key = attempt == 0 ? "flight_icao" : "flight_iata";
+    const char* code = attempt == 0 ? cs : flight;
+    if (!code[0] || !urlSafe(code) || (attempt == 1 && !strcmp(flight, cs))) continue;
+    if (callsToday >= AIRLABS_DAILY_MAX) { Serial.println("AirLabs: daily limit reached"); failed = true; break; }
+    callsToday++;
+    snprintf(url, sizeof url, "https://airlabs.co/api/v9/flight?%s=%s&api_key=%s", key, code, apiKey);
+    doc.clear();
+    int status = getJson(url, doc, filter, err, sizeof err);
+    JsonVariant r = doc["response"].isNull() ? doc.as<JsonVariant>() : doc["response"].as<JsonVariant>();
+    const char* msg = doc["error"]["message"] | "";
+    if (status == 200 && !r["dep_time_ts"].isNull()) {
+      found = true;
+    } else {
+      // Network trouble, overload or a used-up quota: try again later. Otherwise the
+      // flight just isn't in their schedule.
+      if (status < 0 || status == 429 || status >= 500 || strstr(msg, "limit")) failed = true;
+      Serial.printf("AirLabs %s: %s\n", code, msg[0] ? msg : status == 200 ? "no times" : err);
+    }
+  }
+
+  LOCK(lock);
+  Route* r = s.route(cs);
+  if (r && r->times == TIMES_PENDING) {
+    r->timesMs = millis();
+    if (found) {
+      JsonVariant v = doc["response"].isNull() ? doc.as<JsonVariant>() : doc["response"].as<JsonVariant>();
+      r->depSched = localMinutes(v["dep_time_ts"]);
+      r->depEst = localMinutes(v["dep_estimated_ts"]);
+      r->arrSched = localMinutes(v["arr_time_ts"]);
+      r->arrEst = localMinutes(v["arr_estimated_ts"]);
+      r->times = TIMES_KNOWN;
+      r->hasTimes = true;
+    } else {
+      r->times = failed ? TIMES_NONE : TIMES_UNKNOWN;
+    }
+  }
+  UNLOCK(lock);
+  Serial.printf("Times for %s: %s (%d/%d requests today)\n", cs,
+                found ? "found" : failed ? "failed" : "none", callsToday, AIRLABS_DAILY_MAX);
+}
+
+// ---------------------------------------------------------------------------
+//  Plane photos from Planespotters.net. Their terms: credit the photographer,
+//  link to the photo page (we show a QR code), identify the app in the
+//  User-Agent, and never store the images (they only live in memory here).
+// ---------------------------------------------------------------------------
+namespace {
+uint16_t* decoded = nullptr;
+int decW = 0, decH = 0;
+
+int jpegDraw(JPEGDRAW* d) {
+  int w = d->iWidthUsed > 0 ? d->iWidthUsed : d->iWidth;
+  if (d->x + w > decW) w = decW - d->x;
+  for (int y = 0; y < d->iHeight && d->y + y < decH; y++)
+    memcpy(decoded + (d->y + y) * decW + d->x, d->pPixels + y * d->iWidth, w * 2);
+  return 1;
+}
+
+// Scale the decoded picture to fill PHOTO_W x PHOTO_H, cropping the edges (bilinear).
+void coverResize(const uint16_t* src, int w, int h, uint16_t* dst) {
+  float scale = fmaxf((float)PHOTO_W / w, (float)PHOTO_H / h);
+  float x0 = (w - PHOTO_W / scale) / 2, y0 = (h - PHOTO_H / scale) / 2;
+  for (int j = 0; j < PHOTO_H; j++) {
+    float fy = y0 + (j + 0.5f) / scale - 0.5f;
+    int iy = (int)fy; float ty = fy - iy;
+    if (iy < 0) { iy = 0; ty = 0; }
+    int iy1 = iy + 1 < h ? iy + 1 : iy;
+    for (int i = 0; i < PHOTO_W; i++) {
+      float fx = x0 + (i + 0.5f) / scale - 0.5f;
+      int ix = (int)fx; float tx = fx - ix;
+      if (ix < 0) { ix = 0; tx = 0; }
+      int ix1 = ix + 1 < w ? ix + 1 : ix;
+      uint16_t p[4] = {src[iy * w + ix], src[iy * w + ix1], src[iy1 * w + ix], src[iy1 * w + ix1]};
+      float wt[4] = {(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty, tx * ty};
+      float r = 0, g = 0, b = 0;
+      for (int k = 0; k < 4; k++) {
+        r += ((p[k] >> 11) & 31) * wt[k];
+        g += ((p[k] >> 5) & 63) * wt[k];
+        b += (p[k] & 31) * wt[k];
+      }
+      dst[j * PHOTO_W + i] = ((int)(r + 0.5f) << 11) | ((int)(g + 0.5f) << 5) | (int)(b + 0.5f);
+    }
+  }
+}
+
+// Download a URL into a new PSRAM buffer. Returns its length, or 0 on failure.
+size_t download(const char* url, uint8_t** out) {
+  WiFiClientSecure client;
+  client.useBuiltinCACertBundle();
+  client.setHandshakeTimeout(15);
+  HTTPClient http;
+  http.setTimeout(12000);
+  http.setUserAgent(photoUserAgent());
+  if (!http.begin(client, url)) return 0;
+  politeWait();
+  size_t got = 0;
+  if (http.GET() == 200) {
+    int len = http.getSize();
+    if (len > 0 && len < 400000) {
+      uint8_t* buf = (uint8_t*)heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+      WiFiClient* st = http.getStreamPtr();
+      uint32_t t0 = millis();
+      while (buf && (int)got < len && millis() - t0 < 15000) {
+        int n = st->readBytes(buf + got, len - got);
+        if (n > 0) got += n; else delay(5);
+      }
+      if ((int)got == len) *out = buf;
+      else { heap_caps_free(buf); got = 0; }
+    }
+  }
+  http.end();
+  return got;
+}
+}  // namespace
+
+void netFetchPhoto(void* lock) {
+  static uint16_t* ready = nullptr;       // finished picture, copied in under the lock
+  if (!ready) ready = (uint16_t*)heap_caps_malloc(PHOTO_W * PHOTO_H * 2, MALLOC_CAP_SPIRAM);
+  char hex[8], reg[12];
+  LOCK(lock);
+  bool want = photo.state == PHOTO_LOADING;
+  snprintf(hex, sizeof hex, "%s", photo.hex);
+  snprintf(reg, sizeof reg, "%s", photo.reg);
+  snprintf(userAgent, sizeof userAgent, "SkyTracker/1.0 (personal flight-tracker desk display; contact: %s)",
+           cfg.contact);
+  UNLOCK(lock);
+  if (!want || !hex[0]) return;
+
+  // 1. Ask Planespotters for the latest photo of this aircraft (by transponder code, then registration).
+  JsonDocument filter;
+  JsonObject f = filter["photos"][0].to<JsonObject>();
+  f["thumbnail_large"]["src"] = true;
+  f["photographer"] = true;
+  f["link"] = true;
+  JsonDocument doc(&psram);
+  char url[128], err[48];
+  bool found = false;
+  for (int attempt = 0; attempt < 2 && !found; attempt++) {
+    if (attempt == 0 && urlSafe(hex)) snprintf(url, sizeof url, "https://api.planespotters.net/pub/photos/hex/%s", hex);
+    else if (attempt == 1 && urlSafe(reg)) snprintf(url, sizeof url, "https://api.planespotters.net/pub/photos/reg/%s", reg);
+    else break;
+    doc.clear();
+    found = getJson(url, doc, filter, err, sizeof err, photoUserAgent()) == 200 &&
+            doc["photos"][0]["thumbnail_large"]["src"].is<const char*>();
+  }
+  char src[200] = "", who[48] = "", link[160] = "";
+  if (found) {
+    copyStr(src, sizeof src, doc["photos"][0]["thumbnail_large"]["src"] | "");
+    copyStr(who, sizeof who, doc["photos"][0]["photographer"] | "");
+    copyStr(link, sizeof link, doc["photos"][0]["link"] | "");
+    char* q = strchr(link, '?');           // drop tracking parameters: shorter QR code
+    if (q) *q = 0;
+    if (strlen(link) > 78) {               // too long for the QR code: keep just the photo number
+      char* p = strstr(link, "/photo/");
+      char* slash = p ? strchr(p + 7, '/') : nullptr;
+      if (slash) *slash = 0;
+    }
+  }
+
+  // 2. Download and decode the picture (baseline JPEG), then scale it to the card.
+  bool ok = false;
+  uint8_t* jpg = nullptr;
+  size_t len = src[0] ? download(src, &jpg) : 0;
+  if (len) {
+    JPEGDEC jpeg;
+    if (jpeg.openRAM(jpg, len, jpegDraw)) {
+      decW = jpeg.getWidth();
+      decH = jpeg.getHeight();
+      decoded = decW * decH <= 800 * 600 ?
+          (uint16_t*)heap_caps_malloc(decW * decH * 2, MALLOC_CAP_SPIRAM) : nullptr;
+      if (decoded) {
+        jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
+        if (jpeg.decode(0, 0, 0)) {
+          coverResize(decoded, decW, decH, ready);
+          ok = true;
+        }
+        heap_caps_free(decoded);
+        decoded = nullptr;
+      }
+      jpeg.close();
+    }
+    heap_caps_free(jpg);
+  }
+
+  LOCK(lock);
+  if (!strcmp(photo.hex, hex) && photo.state == PHOTO_LOADING) {   // still the same plane?
+    if (ok) {
+      if (!photo.pix) photo.pix = (uint16_t*)heap_caps_malloc(PHOTO_W * PHOTO_H * 2, MALLOC_CAP_SPIRAM);
+      if (photo.pix) memcpy(photo.pix, ready, PHOTO_W * PHOTO_H * 2);
+      snprintf(photo.photographer, sizeof photo.photographer, "%s", who);
+      snprintf(photo.link, sizeof photo.link, "%s", link);
+      photo.state = photo.pix ? PHOTO_READY : PHOTO_MISSING;
+    } else {
+      photo.state = PHOTO_MISSING;
+    }
+  }
+  UNLOCK(lock);
+  Serial.printf("Photo for %s: %s\n", hex, ok ? "shown" : found ? "could not be shown" : "none");
+}

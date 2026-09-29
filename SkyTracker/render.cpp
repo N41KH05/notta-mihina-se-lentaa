@@ -1,0 +1,1119 @@
+// SkyTracker renderer (colour LCD): chart-style map on the left, flight panel on the right.
+#include "render.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include "fonts.h"
+#include "mapdata.h"
+#include "utf8.h"
+#include "photo.h"
+#include "qr.h"
+
+#define RGB(r, g, b) (uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
+static const uint16_t C_WHITE = 0xFFFF, C_BLACK = 0x0000;
+static const uint16_t C_SEA = RGB(186, 212, 234), C_LAND = RGB(247, 244, 236);
+static const uint16_t C_COAST = RGB(96, 128, 160), C_BORDER = RGB(150, 138, 160);
+static const uint16_t C_RING = RGB(90, 120, 158), C_TEXT = RGB(28, 32, 44);
+static const uint16_t C_TEXT2 = RGB(104, 110, 124), C_PLACE = RGB(62, 64, 76);
+static const uint16_t C_RUNWAY = RGB(78, 78, 90), C_NAVY = RGB(22, 36, 66);
+static const uint16_t C_ACCENT = RGB(226, 58, 94), C_EMERG = RGB(214, 30, 30);
+static const uint16_t C_LINE = RGB(214, 218, 226), C_OUTLINE = RGB(30, 36, 52);
+static const uint16_t C_BTN_EDGE = RGB(160, 168, 184);
+static const uint16_t C_COUNTRY = RGB(128, 112, 140), C_WATER = RGB(58, 96, 138);
+
+static const int W = SCREEN_W, H = SCREEN_H, PANEL_X = MAP_W;
+
+// ---------------------------------------------------------------------------
+//  Fonts and text
+// ---------------------------------------------------------------------------
+struct Fnt { const GFXfont* f; int asc; int size; };
+static const Fnt R11 = {&F_R11, F_R11_ASC, 11}, R12 = {&F_R12, F_R12_ASC, 12},
+                 R13 = {&F_R13, F_R13_ASC, 13}, R14 = {&F_R14, F_R14_ASC, 14},
+                 C12 = {&F_C12, F_C12_ASC, 12}, B12 = {&F_B12, F_B12_ASC, 12},
+                 B13 = {&F_B13, F_B13_ASC, 13}, B14 = {&F_B14, F_B14_ASC, 14},
+                 B15 = {&F_B15, F_B15_ASC, 15}, B16 = {&F_B16, F_B16_ASC, 16},
+                 B18 = {&F_B18, F_B18_ASC, 18}, B22 = {&F_B22, F_B22_ASC, 22},
+                 B26 = {&F_B26, F_B26_ASC, 26}, B30 = {&F_B30, F_B30_ASC, 30},
+                 B34 = {&F_B34, F_B34_ASC, 34};
+
+static int textW(const Fnt& fn, const char* in) {
+  char buf[160];
+  utf8ToFont(in, buf, sizeof buf);
+  const char* s = buf;
+  int w = 0;
+  for (; *s; s++) {
+    uint8_t c = (uint8_t)*s;
+    if (c < fn.f->first || c > fn.f->last) continue;
+    w += fn.f->glyph[c - fn.f->first].xAdvance;
+  }
+  return w;
+}
+static void text(Adafruit_GFX& g, int x, int y, const char* in, const Fnt& fn, uint16_t color) {
+  char s[160];
+  utf8ToFont(in, s, sizeof s);
+  g.setFont(fn.f);
+  g.setTextColor(color);
+  g.setCursor(x, y + fn.asc);
+  g.print(s);
+}
+static void textR(Adafruit_GFX& g, int xr, int y, const char* s, const Fnt& fn, uint16_t c) {
+  text(g, xr - textW(fn, s), y, s, fn, c);
+}
+static void textC(Adafruit_GFX& g, int xm, int y, const char* s, const Fnt& fn, uint16_t c) {
+  text(g, xm - textW(fn, s) / 2, y, s, fn, c);
+}
+static void haloText(Adafruit_GFX& g, int x, int y, const char* s, const Fnt& fn, uint16_t c,
+                     uint16_t halo) {
+  static const int8_t off[][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1},
+                                  {-2, 0}, {2, 0}, {0, -2}, {0, 2}};
+  for (auto& o : off) text(g, x + o[0], y + o[1], s, fn, halo);
+  text(g, x, y, s, fn, c);
+}
+static void fit(char* s, const Fnt& fn, int maxW) {
+  utf8ToFont(s, s, strlen(s) + 1);      // one byte per character from here on
+  if (textW(fn, s) <= maxW) return;
+  int n = strlen(s);
+  while (n > 1) {
+    s[--n] = 0;
+    s[n - 1] = '\x84';
+    if (textW(fn, s) <= maxW) return;
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  Formatting
+// ---------------------------------------------------------------------------
+static void thousands(char* out, size_t n, long v) {
+  char sep = thousandsSep();
+  char tmp[24];
+  snprintf(tmp, sizeof tmp, "%ld", v < 0 ? -v : v);
+  int len = strlen(tmp), o = 0;
+  if (v < 0 && o < (int)n - 1) out[o++] = '-';
+  for (int i = 0; i < len && o < (int)n - 1; i++) {
+    out[o++] = tmp[i];
+    int left = len - i - 1;
+    if (left > 0 && left % 3 == 0 && o < (int)n - 1) out[o++] = sep;
+  }
+  out[o] = 0;
+}
+static void decimalComma(char* s) { localDecimal(s); }
+static void fmtAlt(char* out, size_t n, const Plane& p, bool shortForm) {
+  if (!p.hasAlt) { snprintf(out, n, "--"); return; }
+  char t[16];
+  if (!units.altM) {
+    long r = lroundf(p.alt / 100.0f);
+    if (shortForm && p.alt >= 10000) { snprintf(out, n, "FL%03ld", r); return; }
+    thousands(t, sizeof t, r * 100);
+    snprintf(out, n, "%s ft", t);
+  } else {
+    float m = p.alt * 0.3048f;
+    thousands(t, sizeof t, shortForm ? lroundf(m / 100) * 100 : lroundf(m / 10) * 10);
+    snprintf(out, n, "%s m", t);
+  }
+}
+static void fmtSpeed(char* out, size_t n, const Plane& p) {
+  if (!p.hasGs) snprintf(out, n, "--");
+  else if (!units.speedKmh) snprintf(out, n, "%ld kt", lroundf(p.gs));
+  else snprintf(out, n, "%ld km/h", lroundf(p.gs * 1.852f));
+}
+static void fmtDist(char* out, size_t n, double km) {
+  double v = units.distKm ? km : km / 1.852;
+  const char* u = units.distKm ? "km" : "nm";
+  if (v < 10) snprintf(out, n, "%.1f %s", v, u);
+  else snprintf(out, n, "%ld %s", lround(v), u);
+  decimalComma(out);
+}
+static void fmtVrate(char* out, size_t n, const Plane& p) {
+  if (!p.hasVrate || abs(p.vrate) < 300) { snprintf(out, n, "%s", TR("vaakalento", "level")); return; }
+  const char* arrow = p.vrate > 0 ? "\x80" : "\x81";
+  if (!units.altM) {
+    char t[16];
+    thousands(t, sizeof t, lroundf(abs(p.vrate) / 100.0f) * 100);
+    snprintf(out, n, "%s %s ft/min", arrow, t);
+  } else {
+    snprintf(out, n, "%s %.1f m/s", arrow, abs(p.vrate) * 0.00508f);
+    decimalComma(out);
+  }
+}
+static void fmtClock(char* out, size_t n, const struct tm* t, bool secs) {
+  if (!t) { snprintf(out, n, "--:--"); return; }
+  int h = t->tm_hour;
+  if (!TIME_24H) { h %= 12; if (!h) h = 12; }
+  if (secs) snprintf(out, n, "%d:%02d:%02d", h, t->tm_min, t->tm_sec);
+  else snprintf(out, n, "%d:%02d", h, t->tm_min);
+}
+static const char* compass(float deg) {
+  static const char* fi[] = {"P", "KO", "I", "KA", "E", "LO", "L", "LU"};
+  static const char* en[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+  int i = (int)floorf((deg + 22.5f) / 45.0f);
+  return TR(fi, en)[((i % 8) + 8) % 8];
+}
+double haversineKm(double lat1, double lon1, double lat2, double lon2) {
+  double p1 = lat1 * M_PI / 180, p2 = lat2 * M_PI / 180;
+  double dp = p2 - p1, dl = (lon2 - lon1) * M_PI / 180;
+  double a = sin(dp / 2) * sin(dp / 2) + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2);
+  return 6371.0 * 2 * atan2(sqrt(a), sqrt(1 - a));
+}
+static double bearingDeg(double lat1, double lon1, double lat2, double lon2) {
+  double p1 = lat1 * M_PI / 180, p2 = lat2 * M_PI / 180, dl = (lon2 - lon1) * M_PI / 180;
+  double y = sin(dl) * cos(p2), x = cos(p1) * sin(p2) - sin(p1) * cos(p2) * cos(dl);
+  return fmod(atan2(y, x) * 180 / M_PI + 360, 360);
+}
+const char* typeName(const char* t) {
+  static const char* map[][2] = {
+    {"A20N", "Airbus A320neo"}, {"A21N", "Airbus A321neo"}, {"A319", "Airbus A319"},
+    {"A320", "Airbus A320"}, {"A321", "Airbus A321"}, {"BCS1", "Airbus A220-100"},
+    {"BCS3", "Airbus A220-300"}, {"A332", "Airbus A330-200"}, {"A333", "Airbus A330-300"},
+    {"A339", "Airbus A330neo"}, {"A359", "Airbus A350-900"}, {"A35K", "Airbus A350-1000"},
+    {"A388", "Airbus A380"}, {"B737", "Boeing 737-700"}, {"B738", "Boeing 737-800"},
+    {"B739", "Boeing 737-900"}, {"B38M", "Boeing 737 MAX 8"}, {"B39M", "Boeing 737 MAX 9"},
+    {"B752", "Boeing 757-200"}, {"B763", "Boeing 767-300"}, {"B772", "Boeing 777-200"},
+    {"B77W", "Boeing 777-300ER"}, {"B77L", "Boeing 777-200LR"}, {"B788", "Boeing 787-8"},
+    {"B789", "Boeing 787-9"}, {"B78X", "Boeing 787-10"}, {"B744", "Boeing 747-400"},
+    {"B748", "Boeing 747-8"}, {"E170", "Embraer 170"}, {"E75L", "Embraer 175"},
+    {"E190", "Embraer 190"}, {"E195", "Embraer 195"}, {"E290", "Embraer E190-E2"},
+    {"E295", "Embraer E195-E2"}, {"AT75", "ATR 72-500"}, {"AT76", "ATR 72-600"},
+    {"AT45", "ATR 42-500"}, {"DH8D", "Dash 8-400"}, {"CRJ9", "Bombardier CRJ900"},
+    {"CRJ7", "Bombardier CRJ700"}, {"SF34", "Saab 340"}, {"C172", "Cessna 172"},
+    {"PC12", "Pilatus PC-12"}, {"EC35", "Airbus H135"}, {"EC45", "Airbus H145"},
+    {"C68A", "Cessna Citation Latitude"}, {"GLF6", "Gulfstream G650"}, {"A400", "Airbus A400M"},
+    {"C130", "Lockheed C-130 Hercules"}, {"F18S", "F/A-18 Hornet"}, {"H60", "Black Hawk"},
+    {"JS32", "Jetstream 32"}, {"B350", "King Air 350"},
+  };
+  for (auto& m : map)
+    if (!strcmp(t, m[0])) return m[1];
+  return t;
+}
+
+// Plane colour by altitude, like the big flight-tracking sites.
+static uint16_t altColor(const Plane& p) {
+  if (!p.hasAlt) return RGB(120, 120, 130);
+  static const struct { float ft; uint8_t r, g, b; } stops[] = {
+    {0, 226, 76, 40}, {2000, 242, 138, 30}, {6000, 232, 190, 30}, {12000, 110, 180, 56},
+    {20000, 32, 160, 140}, {30000, 40, 112, 214}, {40000, 118, 66, 206}};
+  float a = p.alt;
+  if (a <= stops[0].ft) return RGB(stops[0].r, stops[0].g, stops[0].b);
+  for (int i = 1; i < 7; i++)
+    if (a <= stops[i].ft) {
+      float t = (a - stops[i - 1].ft) / (stops[i].ft - stops[i - 1].ft);
+      return RGB((int)(stops[i - 1].r + (stops[i].r - stops[i - 1].r) * t),
+                 (int)(stops[i - 1].g + (stops[i].g - stops[i - 1].g) * t),
+                 (int)(stops[i - 1].b + (stops[i].b - stops[i - 1].b) * t));
+    }
+  return RGB(stops[6].r, stops[6].g, stops[6].b);
+}
+
+// ---------------------------------------------------------------------------
+//  View transform
+// ---------------------------------------------------------------------------
+static float V_CX, V_CY, V_MPP;
+static int V_ZOOM;
+static void setView(float cx, float cy, int zoom) {
+  V_CX = cx; V_CY = cy; V_ZOOM = zoom; V_MPP = metresPerPx(zoom);
+}
+static inline float sx(float x) { return (x - V_CX) / V_MPP + MAP_W / 2.0f; }
+static inline float sy(float y) { return (V_CY - y) / V_MPP + H / 2.0f; }
+
+// ---------------------------------------------------------------------------
+//  Land: one even-odd scanline pass over every visible ring
+// ---------------------------------------------------------------------------
+struct Edge { float yTop, yBot, x, dx; };
+static Edge* edges = nullptr;
+static int nEdges = 0;
+static const int MAX_EDGES = 60000, MAX_ACTIVE = 4096;
+
+static void addEdge(float x0, float y0, float x1, float y1) {
+  if (y0 == y1 || nEdges >= MAX_EDGES) return;
+  if (y0 > y1) { float t = x0; x0 = x1; x1 = t; t = y0; y0 = y1; y1 = t; }
+  if (y1 < 0 || y0 >= H) return;
+  Edge& e = edges[nEdges++];
+  e.yTop = y0; e.yBot = y1; e.dx = (x1 - x0) / (y1 - y0); e.x = x0;
+}
+struct Layer { const int16_t* pts; float ox, oy, unit; };
+
+static bool shapeVisible(const MapShape& sh, const Layer& L, float margin) {
+  float m = margin * V_MPP;
+  float vx0 = V_CX - MAP_W / 2 * V_MPP - m, vx1 = V_CX + MAP_W / 2 * V_MPP + m;
+  float vy0 = V_CY - H / 2 * V_MPP - m, vy1 = V_CY + H / 2 * V_MPP + m;
+  float x0 = L.ox + sh.x0 * L.unit, x1 = L.ox + sh.x1 * L.unit;
+  float y0 = L.oy + sh.y0 * L.unit, y1 = L.oy + sh.y1 * L.unit;
+  return x1 >= vx0 && x0 <= vx1 && y1 >= vy0 && y0 <= vy1;
+}
+static void collectRings(const Layer& L, const MapShape* shapes, uint32_t n) {
+  for (uint32_t i = 0; i < n; i++) {
+    const MapShape& sh = shapes[i];
+    if (!shapeVisible(sh, L, 4)) continue;
+    const int16_t* p = L.pts + sh.start * 2;
+    float px = sx(L.ox + p[0] * L.unit), py = sy(L.oy + p[1] * L.unit);
+    float fx = px, fy = py;
+    for (uint32_t k = 1; k < sh.count; k++) {
+      float qx = sx(L.ox + p[k * 2] * L.unit), qy = sy(L.oy + p[k * 2 + 1] * L.unit);
+      addEdge(px, py, qx, qy);
+      px = qx; py = qy;
+    }
+    addEdge(px, py, fx, fy);
+  }
+}
+static int cmpEdge(const void* a, const void* b) {
+  float d = ((const Edge*)a)->yTop - ((const Edge*)b)->yTop;
+  return d < 0 ? -1 : d > 0 ? 1 : 0;
+}
+static void fillLand(Adafruit_GFX& g) {
+  qsort(edges, nEdges, sizeof(Edge), cmpEdge);
+  static int active[MAX_ACTIVE];
+  static float xs[MAX_ACTIVE];
+  int nAct = 0, next = 0;
+  for (int row = 0; row < H; row++) {
+    float yc = row + 0.5f;
+    while (next < nEdges && edges[next].yTop <= yc) {
+      if (edges[next].yBot > yc && nAct < MAX_ACTIVE) active[nAct++] = next;
+      next++;
+    }
+    int nx = 0;
+    for (int i = 0; i < nAct;) {
+      Edge& e = edges[active[i]];
+      if (e.yBot <= yc) { active[i] = active[--nAct]; continue; }
+      xs[nx++] = e.x + (yc - e.yTop) * e.dx;
+      i++;
+    }
+    for (int i = 1; i < nx; i++) {
+      float v = xs[i];
+      int j = i - 1;
+      while (j >= 0 && xs[j] > v) { xs[j + 1] = xs[j]; j--; }
+      xs[j + 1] = v;
+    }
+    for (int i = 0; i + 1 < nx; i += 2) {
+      int a = (int)ceilf(xs[i] - 0.5f), b = (int)floorf(xs[i + 1] - 0.5f);
+      if (a < 0) a = 0;
+      if (b > MAP_W - 1) b = MAP_W - 1;
+      if (b >= a) g.drawFastHLine(a, row, b - a + 1, C_LAND);
+    }
+  }
+}
+static void drawLines(Adafruit_GFX& g, const Layer& L, const MapShape* shapes, uint32_t n,
+                      bool dashed, uint16_t color, uint8_t onlyFlag = 0) {
+  for (uint32_t i = 0; i < n; i++) {
+    const MapShape& sh = shapes[i];
+    if (onlyFlag && !(sh.flags & onlyFlag)) continue;
+    if (!shapeVisible(sh, L, 2)) continue;
+    const int16_t* p = L.pts + sh.start * 2;
+    float px = sx(L.ox + p[0] * L.unit), py = sy(L.oy + p[1] * L.unit);
+    float run = 0;
+    for (uint32_t k = 1; k < sh.count + (onlyFlag ? 1 : 0); k++) {
+      uint32_t kk = k % sh.count;
+      float qx = sx(L.ox + p[kk * 2] * L.unit), qy = sy(L.oy + p[kk * 2 + 1] * L.unit);
+      bool on = !((px < -50 && qx < -50) || (px > MAP_W + 50 && qx > MAP_W + 50) ||
+                  (py < -50 && qy < -50) || (py > H + 50 && qy > H + 50));
+      if (on && !dashed) g.drawLine(lroundf(px), lroundf(py), lroundf(qx), lroundf(qy), color);
+      if (on && dashed) {
+        float len = hypotf(qx - px, qy - py);
+        for (float t = 0; t < len;) {
+          float phase = fmodf(run + t, 11.0f);
+          float step = phase < 7 ? 7 - phase : 11 - phase;
+          if (step > len - t) step = len - t;
+          if (phase < 7) {
+            float a = t / len, b = (t + step) / len;
+            g.drawLine(lroundf(px + (qx - px) * a), lroundf(py + (qy - py) * a),
+                       lroundf(px + (qx - px) * b), lroundf(py + (qy - py) * b), color);
+          }
+          t += step < 0.01f ? 0.01f : step;
+        }
+        run += len;
+      }
+      px = qx; py = qy;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  Labels that don't overlap
+// ---------------------------------------------------------------------------
+struct Box { int16_t x0, y0, x1, y1; };
+static Box taken[400];
+static int nTaken = 0;
+static void take(float x0, float y0, float x1, float y1) {
+  if (nTaken < 400) taken[nTaken++] = {(int16_t)x0, (int16_t)y0, (int16_t)x1, (int16_t)y1};
+}
+static bool isFree(float x0, float y0, float x1, float y1) {
+  if (x0 < 2 || y0 < 2 || x1 > MAP_W - 2 || y1 > H - 2) return false;
+  for (int i = 0; i < nTaken; i++) {
+    const Box& b = taken[i];
+    if (x0 < b.x1 && x1 > b.x0 && y0 < b.y1 && y1 > b.y0) return false;
+  }
+  return true;
+}
+// Map labels (towns, airports): text with a halo.
+static bool mapLabel(Adafruit_GFX& g, float x, float y, const char* s, const Fnt& f, int gap,
+                     uint16_t color) {
+  int w = textW(f, s) + 4, h = f.size + 3;
+  const float cand[4][2] = {{x + gap, y - h / 2.0f}, {x - gap - w, y - h / 2.0f},
+                            {x - w / 2.0f, y - gap - h}, {x - w / 2.0f, y + gap}};
+  for (auto& c : cand) {
+    if (!isFree(c[0], c[1], c[0] + w, c[1] + h)) continue;
+    take(c[0], c[1], c[0] + w, c[1] + h);
+    haloText(g, lroundf(c[0]) + 2, lroundf(c[1]) + 1, s, f, color, C_LAND);
+    return true;
+  }
+  return false;
+}
+// Country / sea names: centred on their point, only if the space is free.
+static bool areaLabel(Adafruit_GFX& g, float x, float y, const char* s, const Fnt& f, uint16_t color,
+                      uint16_t halo) {
+  int w = textW(f, s) + 4, h = f.size + 3;
+  static const int8_t shift[][2] = {{0, 0}, {0, -20}, {0, 20}, {-40, 0}, {40, 0}, {0, -40}, {0, 40}};
+  for (auto& d : shift) {                 // nudge it a little if something is in the way
+    float x0 = x - w / 2.0f + d[0], y0 = y - h / 2.0f + d[1];
+    if (!isFree(x0, y0, x0 + w, y0 + h)) continue;
+    take(x0, y0, x0 + w, y0 + h);
+    haloText(g, lroundf(x0) + 2, lroundf(y0) + 1, s, f, color, halo);
+    return true;
+  }
+  return false;
+}
+
+// Plane tags: a small card with the callsign and altitude.
+static bool planeTag(Adafruit_GFX& g, float x, float y, const char* l1, const Fnt& f1,
+                     const char* l2, uint16_t bg, uint16_t fg, uint16_t fg2, uint16_t edge, bool force) {
+  int w = textW(f1, l1), w2 = textW(C12, l2);
+  if (w2 > w) w = w2;
+  w += 8;
+  int h = f1.size + C12.size + 6, gap = 13;
+  const float cand[4][2] = {{x + gap, y - h / 2.0f}, {x - gap - w, y - h / 2.0f},
+                            {x - w / 2.0f, y - gap - h}, {x - w / 2.0f, y + gap}};
+  for (auto& c : cand) {
+    if (!force && !isFree(c[0], c[1], c[0] + w, c[1] + h)) continue;
+    take(c[0], c[1], c[0] + w, c[1] + h);
+    int ix = lroundf(c[0]), iy = lroundf(c[1]);
+    g.fillRoundRect(ix, iy, w, h, 4, bg);
+    if (edge != bg) g.drawRoundRect(ix, iy, w, h, 4, edge);
+    text(g, ix + 4, iy + 2, l1, f1, fg);
+    text(g, ix + 4, iy + 3 + f1.size, l2, C12, fg2);
+    return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+//  Background map (cached by the caller; redrawn only when the view moves)
+// ---------------------------------------------------------------------------
+static float homeX, homeY;
+
+static void planeShape(Adafruit_GFX& g, float x, float y, float heading, float size, uint16_t c) {
+  static const float tris[][6] = {
+    {-0.13f, -1.0f, 0.13f, -1.0f, 0.13f, 0.88f}, {-0.13f, -1.0f, 0.13f, 0.88f, -0.13f, 0.88f},
+    {0.0f, -0.38f, -1.0f, 0.30f, 1.0f, 0.30f}, {0.0f, 0.52f, -0.42f, 0.97f, 0.42f, 0.97f},
+  };
+  float a = heading * 0.0174533f, sn = sinf(a), cs = cosf(a);
+  for (auto& t : tris) {
+    int p[6];
+    for (int i = 0; i < 3; i++) {
+      float px = t[i * 2] * size, py = t[i * 2 + 1] * size;
+      p[i * 2] = lroundf(x + px * cs - py * sn);
+      p[i * 2 + 1] = lroundf(y + px * sn + py * cs);
+    }
+    g.fillTriangle(p[0], p[1], p[2], p[3], p[4], p[5], c);
+  }
+}
+static void ring(Adafruit_GFX& g, int x, int y, int r, int width, uint16_t c) {
+  for (int i = 0; i < width; i++) g.drawCircle(x, y, r + i, c);
+}
+static void thickLine(Adafruit_GFX& g, float x0, float y0, float x1, float y1, float w, uint16_t c) {
+  float dx = x1 - x0, dy = y1 - y0, L = hypotf(dx, dy);
+  if (L < 0.5f) return;
+  float nx = -dy / L * w / 2, ny = dx / L * w / 2;
+  g.fillTriangle(x0 + nx, y0 + ny, x1 + nx, y1 + ny, x1 - nx, y1 - ny, c);
+  g.fillTriangle(x0 + nx, y0 + ny, x1 - nx, y1 - ny, x0 - nx, y0 - ny, c);
+}
+
+void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
+  if (!edges) edges = (Edge*)renderAlloc(sizeof(Edge) * MAX_EDGES);
+  g.setTextWrap(false);
+  setView(cx, cy, zoom);
+  homeX = mercX(cfg.homeLon);
+  homeY = mercY(cfg.homeLat);
+  nTaken = 0;
+
+  g.fillRect(0, 0, MAP_W, H, C_SEA);
+  take(MAP_W - 66, H - 3 * 54 - 10, MAP_W, H);   // keep labels clear of the buttons
+  take(0, H - 104, 150, H);                       // and of the settings button and scale bar
+  float hw = MAP_W / 2 * V_MPP, hh = H / 2 * V_MPP, span = 32000 * REG_UNIT;
+  bool inRegion = V_MPP < 5000 && V_CX - hw > REG_OX - span && V_CX + hw < REG_OX + span &&
+                  V_CY - hh > REG_OY - span && V_CY + hh < REG_OY + span;
+  nEdges = 0;
+  if (inRegion) {
+    Layer L = {REG_PTS, REG_OX, REG_OY, REG_UNIT};
+    bool fine = V_MPP < 400;
+    collectRings(L, fine ? REG_FILL_FINE : REG_FILL_COARSE, fine ? REG_FILL_FINE_N : REG_FILL_COARSE_N);
+    fillLand(g);
+    drawLines(g, L, fine ? REG_COAST_FINE : REG_COAST_COARSE, fine ? REG_COAST_FINE_N : REG_COAST_COARSE_N,
+              false, C_COAST);
+    if (V_ZOOM >= 9) drawLines(g, L, REG_FILL_FINE, REG_FILL_FINE_N, false, C_COAST, 1);
+    drawLines(g, L, fine ? REG_BORDER_FINE : REG_BORDER_COARSE,
+              fine ? REG_BORDER_FINE_N : REG_BORDER_COARSE_N, true, C_BORDER);
+  } else {
+    Layer L = {WLD_PTS, 0, 0, WLD_UNIT};
+    collectRings(L, WLD_FILL, WLD_FILL_N);
+    fillLand(g);
+    drawLines(g, L, WLD_COAST, WLD_COAST_N, false, C_COAST);
+    drawLines(g, L, WLD_BORDER, WLD_BORDER_N, true, C_BORDER);
+  }
+
+  // range rings around home
+  static const int rings[] = RANGE_RINGS;
+  float hx = sx(homeX), hy = sy(homeY);
+  float stretch = 1.0f / cosf(cfg.homeLat * 0.0174533f), unitKm = units.distKm ? 1.0f : 1.852f;
+  for (int n : rings) {
+    float r = n * unitKm * 1000 * stretch / V_MPP;
+    if (r < 30 || r > 1500) continue;
+    int step = r < 300 ? 3 : 1;
+    for (int i = 0; i < 360; i += step) {
+      float a = i * 0.0174533f;
+      int x = lroundf(hx + r * sinf(a)), y = lroundf(hy - r * cosf(a));
+      if (x >= 0 && x < MAP_W - 1 && y >= 0 && y < H) g.fillRect(x, y, 2, 2, C_RING);
+    }
+    if (hx > 0 && hx < MAP_W && hy - r > 10 && hy - r < H) {
+      char t[16];
+      snprintf(t, sizeof t, "%d %s", n, units.distKm ? "km" : "nm");
+      haloText(g, lroundf(hx - textW(R11, t) / 2.0f), lroundf(hy - r - 7), t, R11, C_RING, C_LAND);
+    }
+  }
+
+  // runways (zoomed in) and airport symbols
+  if (V_ZOOM >= 10) {
+    float w = fmaxf(2.0f, 45.0f / V_MPP);
+    for (uint32_t i = 0; i < RUNWAYS_N; i++) {
+      const MapRunway& r = RUNWAYS[i];
+      float ax = sx(r.x1), ay = sy(r.y1), bx = sx(r.x2), by = sy(r.y2);
+      if (ax > -50 && ax < MAP_W + 50 && ay > -50 && ay < H + 50)
+        thickLine(g, ax, ay, bx, by, w > 3 ? w + 2 : w, C_RUNWAY);
+    }
+  }
+  auto airportShown = [](const MapAirport& ap) {
+    return !(V_ZOOM < 5 || !(ap.big || V_ZOOM >= 8) || (!ap.iata[0] && V_ZOOM < 10));
+  };
+  for (uint32_t i = 0; i < AIRPORTS_N && V_ZOOM < 10; i++) {
+    const MapAirport& ap = AIRPORTS[i];
+    if (!airportShown(ap)) continue;
+    float x = sx(ap.x), y = sy(ap.y);
+    if (x < 0 || x >= MAP_W || y < 0 || y >= H) continue;
+    int ix = lroundf(x), iy = lroundf(y);
+    g.fillCircle(ix, iy, 5, C_WHITE);
+    ring(g, ix, iy, 4, 2, C_RUNWAY);
+    g.drawFastHLine(ix - 3, iy, 7, C_RUNWAY);
+    g.drawFastVLine(ix, iy - 3, 7, C_RUNWAY);
+  }
+
+  // home
+  if (hx > -10 && hx < MAP_W + 10 && hy > -10 && hy < H + 10) {
+    int ix = lroundf(hx), iy = lroundf(hy);
+    g.fillCircle(ix, iy, 9, C_WHITE);
+    ring(g, ix, iy, 8, 2, C_ACCENT);
+    g.fillCircle(ix, iy, 3, C_ACCENT);
+    take(hx - 10, hy - 10, hx + 10, hy + 10);
+    // The default name follows the language; a name the user typed is shown as is.
+    const char* hn = homeLabel(cfg.homeName);
+    mapLabel(g, hx, hy, hn, B13, 12, C_ACCENT);
+  }
+  // airport names, then towns
+  for (uint32_t i = 0; i < AIRPORTS_N; i++) {
+    const MapAirport& ap = AIRPORTS[i];
+    if (!airportShown(ap)) continue;
+    float x = sx(ap.x), y = sy(ap.y);
+    if (x < 0 || x >= MAP_W || y < 0 || y >= H) continue;
+    char t[48];
+    const char* code = ap.iata[0] ? ap.iata : ap.icao;
+    if (V_ZOOM >= 11) snprintf(t, sizeof t, "%s (%s)", mapName(ap.name, language == LANG_EN), code);
+    else snprintf(t, sizeof t, "%s", code);
+    mapLabel(g, x, y, t, B12, 9, C_RUNWAY);
+  }
+  // Finnish country names (on land) and sea / lake names (on water)
+  for (uint32_t i = 0; i < MAP_LABELS_N; i++) {
+    const MapLabel& l = MAP_LABELS[i];
+    if (V_ZOOM * 10 < l.minz10 || V_ZOOM * 10 > l.maxz10 + 5) continue;
+    float x = sx(l.x), y = sy(l.y);
+    if (x < -100 || x >= MAP_W + 100 || y < 0 || y >= H) continue;
+    if (l.kind == 0) areaLabel(g, x, y, mapName(l.name, language == LANG_EN), B13, C_COUNTRY, C_LAND);
+    else areaLabel(g, x, y, mapName(l.name, language == LANG_EN), R13, C_WATER, C_SEA);
+  }
+  for (uint32_t i = 0; i < PLACES_N; i++) {
+    const MapPlace& p = PLACES[i];
+    if (p.minz10 / 10.0f > V_ZOOM + 0.5f) continue;
+    float x = sx(p.x), y = sy(p.y);
+    if (x < 0 || x >= MAP_W || y < 0 || y >= H) continue;
+    if (mapLabel(g, x, y, mapName(p.name, language == LANG_EN), p.big ? B14 : R12, 6, C_PLACE))
+      g.fillRect(lroundf(x) - 2, lroundf(y) - 2, 5, 5, C_PLACE);
+  }
+
+  // scale bar
+  double lat = latFromY(V_CY);
+  float real = V_MPP * cos(lat * M_PI / 180), unitM = units.distKm ? 1000 : 1852;
+  static const int nice[] = {1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000};
+  int best = 1;
+  for (int n : nice)
+    if (n * unitM / real <= 110) best = n;
+  int L = lroundf(best * unitM / real), x = 12, y = H - 14;
+  char t[16];
+  snprintf(t, sizeof t, "%d %s", best, units.distKm ? "km" : "nm");
+  g.fillRoundRect(x - 6, y - 18, L + 16 + textW(B12, t), 26, 4, C_WHITE);
+  g.fillRect(x, y - 1, L, 3, C_TEXT);
+  g.fillRect(x, y - 5, 2, 6, C_TEXT);
+  g.fillRect(x + L - 1, y - 5, 2, 6, C_TEXT);
+  text(g, x + L + 5, y - 9, t, B12, C_TEXT);
+}
+
+// ---------------------------------------------------------------------------
+//  Overlay: planes, buttons, panel (every frame)
+// ---------------------------------------------------------------------------
+static int viewIdx[MAX_PLANES];
+static char rowHex[13][8];
+static int nRows = 0;
+const char* listRowHex(int row) { return row >= 0 && row < nRows ? rowHex[row] : nullptr; }
+
+// On-screen buttons over the map (bottom right).
+static const int BTN = 46, BTN_X = MAP_W - BTN - 10;
+static const int BTN_Y_IN = H - 3 * (BTN + 8) - 2, BTN_Y_OUT = BTN_Y_IN + BTN + 8,
+                 BTN_Y_HOME = BTN_Y_OUT + BTN + 8;
+// Settings button: bottom left, just above the scale bar.
+static const int SET_X = 10, SET_Y = H - 40 - BTN - 4;
+// Buttons in the details panel.
+static const int PB_Y = H - 96, PB_H = 40;
+
+static void mapButton(Adafruit_GFX& g, int y, int kind, int bx = BTN_X) {
+  g.fillRoundRect(bx + 2, y + 3, BTN, BTN, 8, RGB(120, 130, 150));   // shadow
+  g.fillRoundRect(bx, y, BTN, BTN, 8, C_WHITE);
+  g.drawRoundRect(bx, y, BTN, BTN, 8, C_BTN_EDGE);
+  int cx = bx + BTN / 2, cy = y + BTN / 2;
+  if (kind == 3) {                                                  // gear
+    for (int i = 0; i < 8; i++) {
+      float a = i * 0.785398f;
+      g.fillCircle(lroundf(cx + 12 * sinf(a)), lroundf(cy - 12 * cosf(a)), 4, C_NAVY);
+    }
+    g.fillCircle(cx, cy, 12, C_NAVY);
+    g.fillCircle(cx, cy, 5, C_WHITE);
+    return;
+  }
+  if (kind != 2) g.fillRect(cx - 11, cy - 2, 22, 4, C_NAVY);        // minus bar
+  if (kind == 0) g.fillRect(cx - 2, cy - 11, 4, 22, C_NAVY);        // plus
+  if (kind == 2) {                                                  // house
+    g.fillTriangle(cx, cy - 13, cx - 14, cy, cx + 14, cy, C_NAVY);
+    g.fillRect(cx - 9, cy, 18, 12, C_NAVY);
+    g.fillRect(cx - 3, cy + 4, 6, 8, C_WHITE);
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  Photo card: 288 x 214 px (16 % of the screen), in the top-left corner of the
+//  map, or top-right when the selected plane would be underneath it.
+// ---------------------------------------------------------------------------
+static const int CARD_Y = 8, CARD_W = PHOTO_W + 16, QR_MAX = 74;   // QR up to version 4
+static int CARD_X = 8;
+
+static bool photoVisible(const AppState& s) {
+  return s.selHex[0] && photo.state != PHOTO_NONE && !photo.hidden && !strcmp(photo.hex, s.selHex);
+}
+static int cardHeight() {
+  return photo.state == PHOTO_MISSING ? 44 : 8 + PHOTO_H + 6 + QR_MAX + 4;   // 214
+}
+// Top-left normally; top-right if the selected plane would be under the card there
+// (and not under it on the right). The map centre always stays uncovered.
+static void placeCard(const Plane* sel) {
+  if (!sel) return;
+  float x = sx(sel->x), y = sy(sel->y);
+  auto under = [&](int cx) {
+    return x > cx - 16 && x < cx + CARD_W + 16 && y > CARD_Y - 16 && y < CARD_Y + cardHeight() + 12;
+  };
+  const int left = 8, right = MAP_W - CARD_W - 10;
+  if (!under(left)) CARD_X = left;
+  else if (!under(right)) CARD_X = right;
+}
+
+// QR code of the photo's web page, cached until the link changes.
+int drawQr(Adafruit_GFX& g, int x, int y, const char* link, int m) {
+  static char last[160] = "";
+  static uint8_t buf[256];                 // enough for version 4
+  static QRCode qr;
+  static bool ok = false;
+  if (strcmp(last, link)) {
+    snprintf(last, sizeof last, "%s", link);
+    // Pick the version from the byte-mode capacity table (ECC low). The library does not
+    // check capacity itself, so a too-small version would overflow its buffer.
+    static const uint8_t capacity[] = {0, 17, 32, 53, 78};
+    size_t n = strlen(link);
+    uint8_t v = 0;
+    for (uint8_t i = 1; i <= 4 && !v; i++) if (n <= capacity[i]) v = i;
+    ok = v && qrcode_getBufferSize(v) <= sizeof buf && qrcode_initText(&qr, buf, v, ECC_LOW, link) == 0;
+  }
+  if (!ok) return 0;
+  int size = qr.size * m + 8;              // m px per module + quiet zone
+  g.fillRect(x, y, size, size, C_WHITE);
+  for (int r = 0; r < qr.size; r++)
+    for (int c = 0; c < qr.size; c++)
+      if (qrcode_getModule(&qr, c, r)) g.fillRect(x + 4 + c * m, y + 4 + r * m, m, m, C_BLACK);
+  return size;
+}
+
+static void drawPhotoCard(Adafruit_GFX& g, uint32_t nowMs) {
+  int h = cardHeight();
+  g.fillRoundRect(CARD_X + 2, CARD_Y + 3, CARD_W, h, 10, RGB(120, 130, 150));    // shadow
+  g.fillRoundRect(CARD_X, CARD_Y, CARD_W, h, 10, C_WHITE);
+  g.drawRoundRect(CARD_X, CARD_Y, CARD_W, h, 10, C_BTN_EDGE);
+  int px = CARD_X + 8, py = CARD_Y + 8;
+  if (photo.state == PHOTO_MISSING) {
+    text(g, px + 4, CARD_Y + 14, TR("Tästä koneesta ei ole kuvaa", "No photo of this aircraft"), R13, C_TEXT2);
+    return;
+  }
+  if (photo.state == PHOTO_READY && photo.pix) {
+    g.drawRGBBitmap(px, py, photo.pix, PHOTO_W, PHOTO_H);
+  } else {                                  // still loading
+    g.fillRect(px, py, PHOTO_W, PHOTO_H, RGB(226, 232, 240));
+    char t[32];
+    const char* lbl = TR("Haetaan kuvaa", "Loading photo");
+    snprintf(t, sizeof t, "%s%.*s", lbl, (int)((nowMs / 400) % 4), "...");
+    text(g, px + PHOTO_W / 2 - (textW(R13, lbl) + textW(R13, "...")) / 2, py + PHOTO_H / 2 - 8, t, R13, C_TEXT2);
+  }
+  int cx = px + PHOTO_W - 14, cy = py + 14;                     // close mark
+  g.fillCircle(cx, cy, 11, RGB(30, 36, 52));
+  for (int d = -1; d <= 1; d++) {
+    g.drawLine(cx - 5 + d, cy - 5, cx + 5 + d, cy + 5, C_WHITE);
+    g.drawLine(cx + 5 + d, cy - 5, cx - 5 + d, cy + 5, C_WHITE);
+  }
+  // Credit: Planespotters asks for the photographer's name and a link to the photo.
+  int ty = py + PHOTO_H + 6, textWmax = PHOTO_W - QR_MAX - 6;
+  if (photo.state == PHOTO_READY) {
+    char who[64];
+    snprintf(who, sizeof who, TR("Kuva: %s", "Photo: %s"), photo.photographer[0] ? photo.photographer : TR("tuntematon", "unknown"));
+    fit(who, B12, textWmax);
+    text(g, px, ty, who, B12, C_TEXT);
+    text(g, px, ty + 17, "planespotters.net", R12, C_TEXT2);
+    text(g, px, ty + 40, TR("Kuvan sivu puhelimella:", "Photo page on your phone:"), R11, C_TEXT2);
+    text(g, px, ty + 54, TR("skannaa QR-koodi", "scan the QR code"), R11, C_TEXT2);
+    drawQr(g, px + PHOTO_W - QR_MAX, ty - 2, photo.link);
+  } else {
+    text(g, px, ty, TR("Kuva: planespotters.net", "Photo: planespotters.net"), R12, C_TEXT2);
+  }
+}
+
+UiHit uiHitTest(int x, int y, const AppState& s, int* row) {
+  if (s.pickHome) {
+    if (x < MAP_W) {
+      if (x >= BTN_X && x < BTN_X + BTN) {
+        if (y >= BTN_Y_IN && y < BTN_Y_IN + BTN) return HIT_ZOOM_IN;
+        if (y >= BTN_Y_OUT && y < BTN_Y_OUT + BTN) return HIT_ZOOM_OUT;
+        if (y >= BTN_Y_HOME && y < BTN_Y_HOME + BTN) return HIT_HOME;
+      }
+      return HIT_MAP;
+    }
+    if (y >= PB_Y && y < PB_Y + PB_H) return x < PANEL_X + (W - PANEL_X) / 2 ? HIT_PICK_SAVE : HIT_PICK_CANCEL;
+    return HIT_PANEL;
+  }
+  if (photoVisible(s) && x >= CARD_X && x < CARD_X + CARD_W && y >= CARD_Y && y < CARD_Y + cardHeight())
+    return HIT_PHOTO;
+  if (x < MAP_W) {
+    if (x >= SET_X && x < SET_X + BTN && y >= SET_Y && y < SET_Y + BTN) return HIT_SETTINGS;
+    if (x >= BTN_X && x < BTN_X + BTN) {
+      if (y >= BTN_Y_IN && y < BTN_Y_IN + BTN) return HIT_ZOOM_IN;
+      if (y >= BTN_Y_OUT && y < BTN_Y_OUT + BTN) return HIT_ZOOM_OUT;
+      if (y >= BTN_Y_HOME && y < BTN_Y_HOME + BTN) return HIT_HOME;
+    }
+    return HIT_MAP;
+  }
+  if (s.selHex[0]) {
+    if (y >= PB_Y && y < PB_Y + PB_H) return x < PANEL_X + (W - PANEL_X) / 2 ? HIT_FOLLOW : HIT_CLOSE;
+    return HIT_PANEL;
+  }
+  if (y >= 80 && y < 80 + 26 * 13) {
+    int r = (y - 80) / 26;
+    if (r < nRows) { if (row) *row = r; return HIT_LIST_ROW; }
+  }
+  return HIT_PANEL;
+}
+
+int planeAt(AppState& s, int x, int y, int maxPx) {
+  int best = -1;
+  float bd = maxPx * maxPx;
+  for (int i = 0; i < s.nPlanes; i++) {
+    float dx = sx(s.planes[i].x) - x, dy = sy(s.planes[i].y) - y, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+
+static void drawPlanes(Adafruit_GFX& g, AppState& s, int n) {
+  float size = V_ZOOM < 7 ? 8 : 10;
+  for (int k = 0; k < n; k++) {             // trails underneath
+    const Plane& p = s.planes[viewIdx[k]];
+    bool sel = !strcmp(p.hex, s.selHex);
+    uint16_t c = altColor(p);
+    float lx = 0, ly = 0;
+    for (int i = 0; i < p.trailN; i++) {
+      const float* t = p.trailAt(i);
+      float tx = sx(t[0]), ty = sy(t[1]);
+      if (sel && i) { g.drawLine(lx, ly, tx, ty, c); g.drawLine(lx + 1, ly, tx + 1, ty, c); }
+      else g.fillRect(lroundf(tx) - 1, lroundf(ty) - 1, 2, 2, c);
+      lx = tx; ly = ty;
+    }
+    if (sel && p.trailN) g.drawLine(lx, ly, sx(p.x), sy(p.y), c);
+  }
+  for (int pass = 0; pass < 2; pass++)       // icons; selected on top
+    for (int k = 0; k < n; k++) {
+      const Plane& p = s.planes[viewIdx[k]];
+      bool sel = !strcmp(p.hex, s.selHex);
+      if (sel != (pass == 1)) continue;
+      float x = sx(p.x), y = sy(p.y), sz = size + (sel ? 3 : 0), hd = p.hasTrack ? p.track : 0;
+      if (sel) {
+        g.fillCircle(lroundf(x), lroundf(y), lroundf(sz + 9), RGB(255, 236, 242));
+        ring(g, lroundf(x), lroundf(y), lroundf(sz + 8), 2, C_ACCENT);
+      }
+      planeShape(g, x, y, hd, sz + 2, p.emergency() ? C_EMERG : C_OUTLINE);
+      planeShape(g, x, y, hd, sz, p.emergency() ? RGB(255, 200, 200) : altColor(p));
+      take(x - size, y - size, x + size, y + size);
+    }
+  bool crowded = n > 25 && V_ZOOM < 8;
+  for (int pass = 0; pass < 2; pass++)       // tags: selected first, then nearest
+    for (int k = 0; k < n; k++) {
+      const Plane& p = s.planes[viewIdx[k]];
+      bool sel = !strcmp(p.hex, s.selHex);
+      if (sel != (pass == 0)) continue;
+      if (crowded && !sel && !p.emergency()) continue;
+      char alt[24], l2[32];
+      fmtAlt(alt, sizeof alt, p, true);
+      if (p.hasVrate && abs(p.vrate) >= 300) strcat(alt, p.vrate > 0 ? " \x80" : " \x81");
+      if (p.emergency()) snprintf(l2, sizeof l2, TR("HÄTÄ %s", "EMERG %s"), p.squawk);
+      else snprintf(l2, sizeof l2, "%s", alt);
+      if (p.emergency())
+        planeTag(g, sx(p.x), sy(p.y), p.label(), B12, l2, C_EMERG, C_WHITE, C_WHITE, C_EMERG, sel);
+      else if (sel)
+        planeTag(g, sx(p.x), sy(p.y), p.label(), B14, l2, C_NAVY, C_WHITE, RGB(200, 210, 230), C_NAVY, true);
+      else
+        planeTag(g, sx(p.x), sy(p.y), p.label(), B12, l2, C_WHITE, C_TEXT, C_TEXT2, C_BTN_EDGE, false);
+    }
+}
+
+static void drawCoverage(Adafruit_GFX& g, AppState& s) {
+  if (s.fetchRadiusNm < 250 || s.demo) return;
+  double lat = latFromY(s.fetchCy);
+  float r = 250 * 1852 / cos(lat * M_PI / 180) / V_MPP, cx = sx(s.fetchCx), cy = sy(s.fetchCy);
+  const float corners[4][2] = {{0, 0}, {MAP_W, 0}, {0, H}, {MAP_W, H}};
+  bool covered = true;
+  for (auto& c : corners)
+    if (hypotf(c[0] - cx, c[1] - cy) >= r) covered = false;
+  if (covered) return;
+  for (int i = 0; i < 360; i += 2) {
+    float a = i * 0.0174533f;
+    g.fillRect(lroundf(cx + r * sinf(a)) - 1, lroundf(cy - r * cosf(a)) - 1, 3, 3, C_NAVY);
+  }
+  const char* t = units.distKm ? TR("Koneet 460 km:n säteellä keskipisteestä", "Aircraft within 460 km of the centre")
+                               : TR("Koneet 250 nm:n säteellä keskipisteestä", "Aircraft within 250 nm of the centre");
+  int w = textW(B12, t);
+  int nx = 312 - w / 2, ny = H - 34;     // bottom centre, between the scale bar and the buttons
+  g.fillRoundRect(nx - 8, ny, w + 16, 22, 5, C_NAVY);
+  text(g, nx, ny + 3, t, B12, C_WHITE);
+}
+
+static void row(Adafruit_GFX& g, int y, const char* lab, const char* value, uint16_t swatch = 0) {
+  char v[48];
+  snprintf(v, sizeof v, "%s", value);
+  fit(v, B16, W - PANEL_X - 32 - textW(R12, lab) - 12);   // never run into the label
+  text(g, PANEL_X + 16, y + 3, lab, R12, C_TEXT2);
+  int vx = W - 16 - textW(B16, v);
+  text(g, vx, y, v, B16, C_TEXT);
+  if (swatch) g.fillRoundRect(vx - 16, y + 3, 10, 12, 2, swatch);
+}
+
+static void panelButton(Adafruit_GFX& g, int x, int w, const char* label, bool on) {
+  g.fillRoundRect(x, PB_Y, w, PB_H, 8, on ? C_NAVY : C_WHITE);
+  g.drawRoundRect(x, PB_Y, w, PB_H, 8, on ? C_NAVY : C_BTN_EDGE);
+  textC(g, x + w / 2, PB_Y + 12, label, B14, on ? C_WHITE : C_NAVY);
+}
+
+static void panelList(Adafruit_GFX& g, AppState& s, int n) {
+  int x0 = PANEL_X + 16, x1 = W - 16;
+  char t[48];
+  text(g, x0, 50, TR("NÄKYVISSÄ", "IN VIEW"), B15, C_TEXT);
+  snprintf(t, sizeof t, "%d %s", n, n == 1 ? TR("kone", "aircraft") : TR("konetta", "aircraft"));
+  textR(g, x1, 51, t, R14, C_TEXT2);
+  g.fillRect(x0, 74, x1 - x0, 2, C_NAVY);
+  nRows = 0;
+  if (!n) {
+    if (s.wifiDown && !s.demo) {
+      text(g, x0, 92, TR("Ei Wi-Fi-yhteyttä", "No Wi-Fi connection"), B18, C_EMERG);
+      char nm[40];
+      snprintf(nm, sizeof nm, "%s", s.wifiName);
+      fit(nm, B14, x1 - x0);
+      text(g, x0, 124, TR("Yhdistetään uudelleen verkkoon", "Reconnecting to the network"), R13, C_TEXT2);
+      text(g, x0, 142, nm, B14, C_TEXT);
+      text(g, x0, 172, TR("Laite yrittää itse, kunnes yhteys", "It keeps trying until the"), R13, C_TEXT2);
+      text(g, x0, 189, TR("palaa. Verkon voi vaihtaa", "connection is back. The network"), R13, C_TEXT2);
+      text(g, x0, 206, TR("asetuksista (ratas vasemmalla).", "can be changed in Settings (gear)."), R13, C_TEXT2);
+      return;
+    }
+    if (!s.apiOk && !s.demo) {
+      text(g, x0, 92, TR("Lentotietoja ei saada", "No flight data"), B18, C_EMERG);
+      text(g, x0, 122, TR("Kokeiltu:", "Tried:"), R13, C_TEXT2);
+      char buf[sizeof s.apiError];
+      snprintf(buf, sizeof buf, "%s", s.apiError[0] ? s.apiError : TR("tuntematon syy", "unknown reason"));
+      int y = 140;
+      for (char* tok = strtok(buf, ";"); tok && y < 260; tok = strtok(nullptr, ";")) {
+        while (*tok == ' ') tok++;
+        char line[64];
+        snprintf(line, sizeof line, "%s", tok);
+        fit(line, R13, x1 - x0);
+        text(g, x0, y, line, R13, C_TEXT);
+        y += 17;
+      }
+      snprintf(t, sizeof t, TR("Yritetään uudelleen %d s välein.", "Retrying every %d s."), POLL_SECONDS);
+      text(g, x0, y + 17, t, R13, C_TEXT2);
+      return;
+    }
+    text(g, x0, 92, s.updatedEpoch ? TR("Taivas on tyhjä.", "The sky is empty.") : TR("Etsitään koneita…", "Looking for aircraft…"), B18, C_TEXT);
+    text(g, x0, 122, TR("Loitonna nähdäksesi laajemmalle.", "Zoom out to see a wider area."), R13, C_TEXT2);
+    return;
+  }
+  int y = 82;
+  for (int k = 0; k < n && k < 13; k++) {
+    const Plane& p = s.planes[viewIdx[k]];
+    if (k % 2) g.fillRect(PANEL_X + 8, y - 4, W - PANEL_X - 16, 26, RGB(243, 245, 249));
+    g.fillCircle(x0 + 4, y + 9, 5, altColor(p));
+    text(g, x0 + 16, y, p.label(), B15, C_TEXT);
+    fmtAlt(t, sizeof t, p, true);
+    text(g, x0 + 122, y + 1, t, R13, C_TEXT2);
+    fmtDist(t, sizeof t, haversineKm(cfg.homeLat, cfg.homeLon, p.lat, p.lon));
+    textR(g, x1, y + 1, t, R13, C_TEXT2);
+    snprintf(rowHex[nRows++], 8, "%s", p.hex);
+    y += 26;
+  }
+  if (n > 13) {
+    snprintf(t, sizeof t, TR("+ %d lisää", "+ %d more"), n - 13);
+    text(g, x0, y, t, R12, C_TEXT2);
+  }
+}
+
+// "14:05" from minutes past midnight (same style as the clock at the top).
+static void fmtHm(char* out, size_t n, int m) {
+  m = (m % 1440 + 1440) % 1440;
+  snprintf(out, n, "%02d:%02d", m / 60, m % 60);
+}
+// Minutes b - a on a 24-hour clock, in -720..719.
+static int clockDiff(int a, int b) { return ((b - a) % 1440 + 1440 + 720) % 1440 - 720; }
+
+// Departure and arrival line under the city names. Times from the timetable service
+// when there are some; otherwise an arrival estimate from distance and ground speed.
+static void panelTimes(Adafruit_GFX& g, const Route& r, const Plane& p, const struct tm* now,
+                       int x0, int x1, int y) {
+  static const uint16_t C_LATE = RGB(200, 110, 0);
+  char t[32], c[12];
+  bool sched = r.hasTimes;
+  // Departure
+  int dep = sched ? (r.depEst >= 0 ? r.depEst : r.depSched) : -1;
+  if (dep >= 0) {
+    fmtHm(c, sizeof c, dep);
+    int d = r.depSched >= 0 ? clockDiff(r.depSched, dep) : 0;
+    if (d >= 5) snprintf(t, sizeof t, TR("Lähti %s (+%d)", "Dep %s (+%d)"), c, d);   // minutes behind the timetable
+    else snprintf(t, sizeof t, TR("Lähti %s", "Dep %s"), c);
+    text(g, x0, y, t, R12, d >= 15 ? C_LATE : C_TEXT);
+  }
+  // Arrival
+  int arr = -1, late = 0;
+  bool est = false;
+  if (sched && (r.arrEst >= 0 || r.arrSched >= 0)) {
+    arr = r.arrEst >= 0 ? r.arrEst : r.arrSched;
+    if (r.arrSched >= 0) late = clockDiff(r.arrSched, arr);
+  } else if (r.hasDest && p.hasGs && p.gs > 60 && now) {
+    double km = haversineKm(p.lat, p.lon, r.toLat, r.toLon);
+    double min = km / (p.gs * 1.852) * 60;
+    if (min < 20 * 60) {
+      arr = now->tm_hour * 60 + now->tm_min + (int)lround(min);
+      est = true;
+    }
+  }
+  if (arr >= 0) {
+    fmtHm(c, sizeof c, arr);
+    if (est) snprintf(t, sizeof t, TR("Saapuu n. %s", "Arr ~%s"), c);         // our own estimate
+    else if (late >= 5) snprintf(t, sizeof t, TR("Saapuu %s (+%d)", "Arr %s (+%d)"), c, late);
+    else snprintf(t, sizeof t, TR("Saapuu %s", "Arr %s"), c);
+    textR(g, x1, y, t, R12, late >= 15 ? C_LATE : C_TEXT);
+  }
+}
+
+static void panelDetails(Adafruit_GFX& g, AppState& s, const Plane& p, const struct tm* now) {
+  int x0 = PANEL_X + 16, x1 = W - 16;
+  Route* r = s.route(p.cs);
+  bool known = r && r->state == ROUTE_KNOWN;
+  bool looking = p.cs[0] && (!r || r->state == ROUTE_PENDING);
+  char title[16], sub[64], t[48];
+  snprintf(title, sizeof title, "%s", known && r->flight[0] ? r->flight : p.label());
+  const Fnt* tf = &B34;
+  if (textW(*tf, title) > x1 - x0) tf = &B26;
+  if (textW(*tf, title) > x1 - x0) tf = &B22;
+  text(g, x0, 46, title, *tf, C_NAVY);
+  if (known && r->airline[0]) {
+    if (r->flight[0] && p.cs[0]) snprintf(sub, sizeof sub, "%s  \x83  %s", r->airline, p.cs);
+    else snprintf(sub, sizeof sub, "%s", r->airline);
+  } else {
+    snprintf(sub, sizeof sub, "%s", looking ? "" : typeName(p.type));
+  }
+  fit(sub, R14, x1 - x0);
+  text(g, x0, 88, sub, R14, C_TEXT2);
+  if (p.emergency()) {
+    g.fillRoundRect(x0, 106, x1 - x0, 22, 4, C_EMERG);
+    snprintf(t, sizeof t, TR("HÄTÄKOODI %s", "EMERGENCY %s"), p.squawk);
+    text(g, x0 + 6, 110, t, B13, C_WHITE);
+  }
+  int y = 132;
+  if (known && r->from[0] && r->to[0]) {
+    text(g, x0, y, r->from, B30, C_TEXT);
+    textR(g, x1, y, r->to, B30, C_TEXT);
+    int ax0 = x0 + textW(B30, r->from) + 10, ax1 = x1 - textW(B30, r->to) - 10;
+    g.fillRect(ax0, y + 17, ax1 - 4 - ax0, 2, C_ACCENT);
+    g.fillTriangle(ax1, y + 18, ax1 - 9, y + 12, ax1 - 9, y + 24, C_ACCENT);
+    char c1[24], c2[24];
+    snprintf(c1, sizeof c1, "%s", r->fromCity);
+    snprintf(c2, sizeof c2, "%s", r->toCity);
+    fit(c1, R12, 115);
+    fit(c2, R12, 115);
+    text(g, x0, y + 38, c1, R12, C_TEXT2);
+    textR(g, x1, y + 38, c2, R12, C_TEXT2);
+    panelTimes(g, *r, p, now, x0, x1, y + 55);
+  } else {
+    text(g, x0, y + 4, looking ? TR("Haetaan reittiä…", "Looking up route…") : TR("Reittiä ei ole julkaistu", "No published route"), B16, C_TEXT);
+    if (!looking) {
+      text(g, x0, y + 28, TR("Kaikki lennot eivät kerro määränpäätään", "Not every flight publishes its route"), R12, C_TEXT2);
+      text(g, x0, y + 43, TR("(esim. yksityis- ja sotilaslennot).", "(e.g. private and military flights)."), R12, C_TEXT2);
+    }
+  }
+  g.fillRect(x0, 207, x1 - x0, 1, C_LINE);
+
+  double dist = haversineKm(cfg.homeLat, cfg.homeLon, p.lat, p.lon);
+  double brg = bearingDeg(cfg.homeLat, cfg.homeLon, p.lat, p.lon);
+  y = 213;
+  fmtAlt(t, sizeof t, p, false);  row(g, y, TR("KORKEUS", "ALTITUDE"), t, altColor(p)); y += 23;
+  fmtVrate(t, sizeof t, p);       row(g, y, TR("NOUSU/LASKU", "VERTICAL RATE"), t);              y += 23;
+  fmtSpeed(t, sizeof t, p);       row(g, y, TR("NOPEUS", "GROUND SPEED"), t);                 y += 23;
+  if (p.hasTrack) snprintf(t, sizeof t, "%03ld\x82 %s", lroundf(p.track) % 360, compass(p.track));
+  else snprintf(t, sizeof t, "--");
+  row(g, y, TR("SUUNTA", "TRACK"), t);        y += 23;
+  char d[24];
+  fmtDist(d, sizeof d, dist);
+  snprintf(t, sizeof t, "%s %s", d, compass(brg));
+  row(g, y, TR("ETÄISYYS KODISTA", "DISTANCE FROM HOME"), t);      y += 23;
+  row(g, y, TR("KONETYYPPI", "AIRCRAFT TYPE"), p.type[0] ? typeName(p.type) : "--");  y += 23;
+  row(g, y, TR("TUNNUS", "REGISTRATION"), p.reg[0] ? p.reg : "--");
+
+  int bw = (x1 - x0 - 10) / 2;
+  panelButton(g, x0, bw, s.follow ? TR("SEURATAAN", "FOLLOWING") : TR("SEURAA", "FOLLOW"), s.follow);
+  panelButton(g, x0 + bw + 10, bw, TR("SULJE", "CLOSE"), false);
+}
+
+// ---- Setting home: a cross in the middle of the map, and Save / Cancel -----------------
+static void drawPickCross(Adafruit_GFX& g) {
+  int cx = MAP_W / 2, cy = H / 2;
+  for (int r = 15; r <= 17; r++) g.drawCircle(cx, cy, r, C_WHITE);
+  for (int r = 13; r <= 14; r++) g.drawCircle(cx, cy, r, C_ACCENT);
+  g.fillRect(cx - 30, cy - 2, 16, 4, C_ACCENT);
+  g.fillRect(cx + 15, cy - 2, 16, 4, C_ACCENT);
+  g.fillRect(cx - 2, cy - 30, 4, 16, C_ACCENT);
+  g.fillRect(cx - 2, cy + 15, 4, 16, C_ACCENT);
+  g.fillCircle(cx, cy, 3, C_ACCENT);
+  const char* t = TR("Siirrä karttaa, kunnes risti on kotisi kohdalla", "Move the map until the cross is on your home");
+  int w = textW(B13, t);
+  g.fillRoundRect(MAP_W / 2 - w / 2 - 10, 10, w + 20, 26, 6, C_NAVY);
+  text(g, MAP_W / 2 - w / 2, 15, t, B13, C_WHITE);
+}
+static void panelPick(Adafruit_GFX& g, const AppState& s) {
+  int x0 = PANEL_X + 16, x1 = W - 16;
+  text(g, x0, 50, TR("Aseta koti", "Set home"), B26, C_NAVY);
+  char t[64];
+  if (s.pickName[0]) {
+    text(g, x0, 94, TR("Haun tulos:", "Search result:"), R13, C_TEXT2);
+    snprintf(t, sizeof t, "%s", s.pickName);
+    fit(t, B16, x1 - x0);
+    text(g, x0, 112, t, B16, C_TEXT);
+  }
+  const char* fi[] = {"Risti on kohdassa, joka löytyi.", "Hienosäädä vetämällä karttaa;",
+                      "+ lähentää. Kun risti on kotisi", "kohdalla, paina TALLENNA."};
+  const char* en[] = {"The cross marks the place found.", "Drag the map to fine-tune it;",
+                      "+ zooms in. When the cross is on", "your home, press SAVE."};
+  const char** lines = TR(fi, en);
+  for (int i = 0; i < 4; i++) text(g, x0, 150 + i * 19, lines[i], R13, C_TEXT);
+  double lat = latFromY(s.cy), lon = lonFromX(s.cx);
+  snprintf(t, sizeof t, "%.4f\x82 %s   %.4f\x82 %s", fabs(lat), lat >= 0 ? TR("P", "N") : TR("E", "S"),
+           fabs(lon), lon >= 0 ? TR("I", "E") : TR("L", "W"));
+  localDecimal(t);
+  text(g, x0, 240, t, R12, C_TEXT2);
+  text(g, x0, 300, TR("Kodin voi vaihtaa myöhemmin", "Home can be changed later"), R12, C_TEXT2);
+  text(g, x0, 316, TR("asetuksista.", "in Settings."), R12, C_TEXT2);
+  int bw = (x1 - x0 - 10) / 2;
+  panelButton(g, x0, bw, TR("TALLENNA", "SAVE"), true);
+  panelButton(g, x0 + bw + 10, bw, TR("PERUUTA", "CANCEL"), false);
+}
+
+void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm* now,
+                   const struct tm* upd) {
+  g.setTextWrap(false);
+  s.advance(nowMs);
+  setView(s.cx, s.cy, s.zoom);
+  int n = s.inView(viewIdx, MAX_PLANES);
+  nTaken = 0;
+  // keep tags away from the buttons
+  take(BTN_X - 4, BTN_Y_IN - 4, MAP_W, H);
+  take(0, SET_Y - 4, 150, H);
+  bool card = photoVisible(s) && !s.pickHome;
+  if (s.pickHome) n = 0;                           // no planes while setting home
+  if (card) {
+    placeCard(s.selected());
+    take(CARD_X - 4, 0, CARD_X + CARD_W + 4, CARD_Y + cardHeight() + 4);   // keep tags off the card
+  }
+  drawPlanes(g, s, n);
+  drawCoverage(g, s);
+  if (card) drawPhotoCard(g, nowMs);
+  Plane* sel = s.selected();
+  if (s.follow && sel) {
+    char t[32];
+    snprintf(t, sizeof t, TR("SEURATAAN %s", "FOLLOWING %s"), sel->label());
+    int w = textW(B13, t), by = card ? CARD_Y + cardHeight() + 10 : 8, bx = card ? CARD_X : 8;
+    g.fillRoundRect(bx, by, w + 16, 24, 5, C_NAVY);
+    text(g, bx + 8, by + 4, t, B13, C_WHITE);
+  }
+  mapButton(g, BTN_Y_IN, 0);
+  mapButton(g, BTN_Y_OUT, 1);
+  mapButton(g, BTN_Y_HOME, 2);
+  if (!s.pickHome) mapButton(g, SET_Y, 3, SET_X);
+  if (s.pickHome) drawPickCross(g);
+
+  // panel
+  int x0 = PANEL_X + 16, x1 = W - 16;
+  g.fillRect(PANEL_X, 0, W - PANEL_X, H, C_WHITE);
+  g.fillRect(PANEL_X, 0, 2, H, C_NAVY);
+  g.fillRect(PANEL_X, 0, W - PANEL_X, 38, C_NAVY);
+  char t[64], c[16];
+  fmtClock(c, sizeof c, now, false);
+  textR(g, x1, 9, c, B16, C_WHITE);
+  // Name: the biggest font that fits beside the clock
+  const Fnt* nf = &B12;
+  for (const Fnt* f : {&B16, &B15, &B14, &B13})
+    if (textW(*f, APP_NAME) <= x1 - textW(B16, c) - 12 - x0) { nf = f; break; }
+  text(g, x0, 9 + (16 - nf->size) / 2 + 1, APP_NAME, *nf, C_WHITE);
+  if (s.pickHome) panelPick(g, s);
+  else if (sel) panelDetails(g, s, *sel, now);
+  else panelList(g, s, n);
+
+  g.fillRect(PANEL_X + 10, H - 46, W - PANEL_X - 20, 1, C_LINE);
+  if ((s.wifiDown || !s.apiOk) && !s.demo) {
+    g.fillRoundRect(PANEL_X + 10, H - 41, W - PANEL_X - 20, 19, 4, C_EMERG);
+    text(g, x0, H - 39, s.wifiDown ? TR("Ei Wi-Fi-yhteyttä", "No Wi-Fi connection") : TR("Ei lentotietoja", "No flight data"), B12, C_WHITE);
+  } else {
+    fmtClock(c, sizeof c, s.updatedEpoch ? upd : nullptr, true);
+    snprintf(t, sizeof t, TR("Päivitetty %s  \x83  %s", "Updated %s  \x83  %s"), c, s.demo ? "DEMO" : s.source);
+    text(g, x0, H - 39, t, R12, C_TEXT2);
+  }
+  text(g, x0, H - 21, s.pickHome ? TR("Vedä karttaa \x83 nipistä", "Drag the map \x83 pinch")
+       : sel ? TR("Napauta toista konetta tai SULJE", "Tap another aircraft or CLOSE")
+       : TR("Napauta konetta \x83 vedä \x83 nipistä", "Tap an aircraft \x83 drag \x83 pinch"), R11, C_TEXT2);
+}
+
+void renderMessage(Adafruit_GFX& g, const char* big, const char* small) {
+  g.fillScreen(C_NAVY);
+  g.setTextWrap(false);
+  planeShape(g, W / 2, 170, 45, 30, C_WHITE);
+  textC(g, W / 2, 222, big, B22, C_WHITE);
+  textC(g, W / 2, 258, small, R14, RGB(200, 210, 230));
+}

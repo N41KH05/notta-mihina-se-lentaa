@@ -1,0 +1,14 @@
+# Arduino / build output
+SkyTracker/build/
+*.bin
+*.elf
+*.map
+# map builder downloads
+tools/raw/
+# Python
+__pycache__/
+*.pyc
+# editors / OS
+.DS_Store
+Thumbs.db
+.vscode/

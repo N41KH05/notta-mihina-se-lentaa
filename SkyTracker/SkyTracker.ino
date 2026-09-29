@@ -1,0 +1,712 @@
+// ============================================================================
+//  SkyTracker: a live flight map for the Waveshare ESP32-S3-Touch-LCD-7.
+//
+//  Drag to move the map, pinch (or the +/- buttons) to zoom, tap a plane to see
+//  where it's flying. Settings: config.h.   Guide: README.md.
+// ============================================================================
+#include <Arduino.h>
+#include <WiFi.h>
+#include <Preferences.h>
+#include <time.h>
+#include <Adafruit_GFX.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/queue.h>
+#include <esp_task_wdt.h>
+#include <esp_system.h>
+#include <esp_timer.h>
+#include "config.h"
+#include "model.h"
+#include "board.h"
+#include "render.h"
+#include "net.h"
+#include "demo.h"
+#include "app.h"
+#include "ui.h"
+#include "photo.h"
+#include "web.h"
+#include "places.h"
+
+// A GFX canvas that draws straight into a frame buffer we own.
+class FrameCanvas : public GFXcanvas16 {
+ public:
+  FrameCanvas() : GFXcanvas16(SCREEN_W, SCREEN_H, false) {}
+  void use(uint16_t* buf) { buffer = buf; }
+};
+
+AppState state;
+SemaphoreHandle_t lock;
+QueueHandle_t events;
+TaskHandle_t fetchTask;
+FrameCanvas canvas, baseCanvas;
+uint16_t* baseBuf;                 // cached map background
+
+void* renderAlloc(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM); }
+
+// ---------------------------------------------------------------------------
+//  Touch gestures (own task, ~60 polls a second)
+// ---------------------------------------------------------------------------
+void emitEvent(const Ev& e) { xQueueSend(events, &e, 0); }
+
+void touchTask(void*) {
+  TouchPt p[5];
+  Gestures g;
+  for (;;) {
+    int n = boardTouch(p, 5);
+    g.update(p, n, millis(), emitEvent);
+    vTaskDelay(pdMS_TO_TICKS(16));
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  Background fetching (other CPU core)
+// ---------------------------------------------------------------------------
+void fetchLoop(void*) {
+  esp_task_wdt_add(nullptr);           // restart the board if this task ever hangs
+  for (;;) {
+    esp_task_wdt_reset();
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(POLL_SECONDS * 1000));
+    esp_task_wdt_reset();
+    if (state.night) continue;
+    if (state.demo) {
+      xSemaphoreTake(lock, portMAX_DELAY);
+      time_t t = time(nullptr);
+      struct tm lt;
+      localtime_r(&t, &lt);
+      demoStep(state, millis(), lt.tm_hour * 60 + lt.tm_min);
+      state.updatedEpoch = time(nullptr);
+      xSemaphoreGive(lock);
+    } else if (WiFi.status() == WL_CONNECTED) {
+      netLookupRoute(state, lock);        // quick things for the selected plane first
+      netLookupTimes(state, lock);
+      if (cfg.photos) netFetchPhoto(lock);
+      netFetchPlanes(state, lock);
+    }
+  }
+}
+
+void requestRouteLocked(const char* cs) {
+  if (!cs) return;
+  static int next = 0;
+  if (!cs[0] || state.demo || state.route(cs)) return;
+  Route& r = state.routes[next];
+  next = (next + 1) % ROUTE_CACHE;
+  memset(&r, 0, sizeof r);
+  snprintf(r.cs, sizeof r.cs, "%s", cs);
+  r.state = ROUTE_PENDING;
+  xTaskNotifyGive(fetchTask);
+}
+
+// ---------------------------------------------------------------------------
+//  Drawing
+// ---------------------------------------------------------------------------
+float baseCx = NAN, baseCy = NAN;
+int baseZoom = -1;
+bool baseStale = true;
+
+// While dragging, slide the cached map instead of redrawing it (much faster);
+// it is redrawn properly when the finger lifts.
+void shiftBase(int dx, int dy) {
+  if (abs(dx) >= MAP_W || abs(dy) >= SCREEN_H) { baseStale = true; return; }
+  static uint16_t row[SCREEN_W];
+  const uint16_t sea = baseBuf[0];   // corner pixel is (nearly always) sea colour
+  int y0 = dy > 0 ? SCREEN_H - 1 : 0, y1 = dy > 0 ? -1 : SCREEN_H, step = dy > 0 ? -1 : 1;
+  for (int y = y0; y != y1; y += step) {
+    int src = y - dy;
+    uint16_t* dst = baseBuf + y * SCREEN_W;
+    if (src < 0 || src >= SCREEN_H) { for (int x = 0; x < MAP_W; x++) dst[x] = sea; continue; }
+    memcpy(row, baseBuf + src * SCREEN_W, MAP_W * 2);
+    for (int x = 0; x < MAP_W; x++) {
+      int sxp = x - dx;
+      dst[x] = (sxp >= 0 && sxp < MAP_W) ? row[sxp] : sea;
+    }
+  }
+}
+
+void drawFrame() {
+  struct tm now, upd;
+  bool haveTime = getLocalTime(&now, 0);
+  xSemaphoreTake(lock, portMAX_DELAY);
+  if (baseStale || state.zoom != baseZoom || fabsf(state.cx - baseCx) > 0.5f * metresPerPx(state.zoom) ||
+      fabsf(state.cy - baseCy) > 0.5f * metresPerPx(state.zoom)) {
+    renderBase(baseCanvas, state.cx, state.cy, state.zoom);
+    baseCx = state.cx; baseCy = state.cy; baseZoom = state.zoom; baseStale = false;
+  }
+  uint16_t* fbuf = boardBackBuffer();
+  memcpy(fbuf, baseBuf, SCREEN_W * SCREEN_H * 2);
+  canvas.use(fbuf);
+  time_t u = state.updatedEpoch;
+  localtime_r(&u, &upd);
+  renderOverlay(canvas, state, millis(), haveTime ? &now : nullptr, u > 100000 ? &upd : nullptr);
+  xSemaphoreGive(lock);
+  boardPresent();
+}
+
+void message(const char* big, const char* small) {
+  canvas.use(boardBackBuffer());
+  renderMessage(canvas, big, small);
+  boardPresent();
+}
+
+// ---------------------------------------------------------------------------
+//  Saved settings. Everything chosen on the screen (Wi-Fi network, units, demo
+//  mode) is stored in the board's flash, so it survives restarts and power cuts.
+//  WIFI_SSID in config.h is only used if no network has been saved yet.
+// ---------------------------------------------------------------------------
+Preferences prefs;
+char savedSsid[33] = "", savedPass[64] = "";
+bool savedDemo = false;              // the user chose demo planes
+bool homeAsked = false;              // home has been set (or the question skipped)
+
+void loadSettings() {
+  prefs.begin("skytracker", true);
+  prefs.getString("ssid", savedSsid, sizeof savedSsid);
+  prefs.getString("pass", savedPass, sizeof savedPass);
+  units.distKm = prefs.getBool("distKm", DEFAULT_DISTANCE_KM);
+  units.speedKmh = prefs.getBool("speedKmh", DEFAULT_SPEED_KMH);
+  units.altM = prefs.getBool("altM", DEFAULT_ALTITUDE_M);
+  savedDemo = prefs.getBool("demo", false);
+  language = prefs.getUChar("lang", DEFAULT_LANGUAGE) == LANG_EN ? LANG_EN : LANG_FI;
+  // Changed on the phone settings page (defaults from config.h)
+  cfg.homeLat = prefs.getDouble("homeLat", cfg.homeLat);
+  cfg.homeLon = prefs.getDouble("homeLon", cfg.homeLon);
+  if (prefs.isKey("homeName")) prefs.getString("homeName", cfg.homeName, sizeof cfg.homeName);
+  cfg.nightStart = prefs.getChar("nightStart", cfg.nightStart);
+  cfg.nightEnd = prefs.getChar("nightEnd", cfg.nightEnd);
+  cfg.photos = prefs.getBool("photos", cfg.photos);
+  if (prefs.isKey("contact")) prefs.getString("contact", cfg.contact, sizeof cfg.contact);
+  if (prefs.isKey("airlabs")) prefs.getString("airlabs", cfg.airlabsKey, sizeof cfg.airlabsKey);
+  homeAsked = prefs.getBool("homeAsked", false) || prefs.isKey("homeLat");
+  prefs.end();
+  Serial.printf("Settings: wifi \"%s\", units %s/%s/%s%s\n", savedSsid, units.distKm ? "km" : "nm",
+                units.speedKmh ? "km/h" : "kt", units.altM ? "m" : "ft", savedDemo ? ", demo" : "");
+  if (!savedSsid[0] && strcmp(WIFI_SSID, "YourWiFiName")) {
+    snprintf(savedSsid, sizeof savedSsid, "%s", WIFI_SSID);
+    snprintf(savedPass, sizeof savedPass, "%s", WIFI_PASSWORD);
+  }
+}
+
+void leaveDemo() {                         // switch from simulated planes to live data
+  xSemaphoreTake(lock, portMAX_DELAY);
+  if (state.demo) {
+    state.demo = false;
+    state.nPlanes = 0;
+    state.selHex[0] = 0;
+    state.follow = false;
+    memset(state.routes, 0, sizeof state.routes);
+    state.updatedEpoch = 0;
+    state.apiOk = true;
+  }
+  xSemaphoreGive(lock);
+  if (fetchTask) xTaskNotifyGive(fetchTask);
+}
+
+// Hooks for the on-screen Wi-Fi setup (ui.cpp).
+void hScan() { WiFi.scanDelete(); WiFi.scanNetworks(true); }
+int hResults(WifiNet* out, int max) {
+  int n = WiFi.scanComplete();
+  if (n == WIFI_SCAN_RUNNING) return -1;
+  if (n < 0) { WiFi.scanNetworks(true); return -1; }    // failed: try again
+  int count = 0;
+  for (int i = 0; i < n; i++) {
+    String name = WiFi.SSID(i);
+    if (!name.length()) continue;                       // hidden network
+    int rssi = WiFi.RSSI(i), dup = -1;
+    for (int k = 0; k < count; k++) if (name == out[k].ssid) dup = k;
+    if (dup >= 0) { if (rssi > out[dup].rssi) out[dup].rssi = rssi; continue; }
+    if (count >= max) continue;
+    snprintf(out[count].ssid, sizeof out[count].ssid, "%s", name.c_str());
+    out[count].rssi = rssi;
+    out[count].secure = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+    count++;
+  }
+  for (int i = 1; i < count; i++)                        // strongest first
+    for (int j = i; j > 0 && out[j].rssi > out[j - 1].rssi; j--) { WifiNet t = out[j]; out[j] = out[j - 1]; out[j - 1] = t; }
+  WiFi.scanDelete();
+  return count;
+}
+void hConnect(const char* ssid, const char* pass) {
+  WiFi.disconnect();
+  delay(100);
+  WiFi.begin(ssid, pass[0] ? pass : nullptr);
+}
+int hStatus() {
+  wl_status_t st = WiFi.status();
+  if (st == WL_CONNECTED) return 1;
+  if (st == WL_CONNECT_FAILED || st == WL_NO_SSID_AVAIL) return -1;
+  return 0;
+}
+void hCurrent(char* ssid, size_t n, char* ip, size_t ipn, int* rssi) {
+  bool on = WiFi.status() == WL_CONNECTED;
+  snprintf(ssid, n, "%s", on ? WiFi.SSID().c_str() : "");
+  snprintf(ip, ipn, "%s", on ? WiFi.localIP().toString().c_str() : "");
+  *rssi = on ? WiFi.RSSI() : -100;
+}
+void hConnected(const char* ssid, const char* pass) {
+  snprintf(savedSsid, sizeof savedSsid, "%s", ssid);
+  snprintf(savedPass, sizeof savedPass, "%s", pass);
+  prefs.begin("skytracker", false);
+  prefs.putString("ssid", ssid);
+  prefs.putString("pass", pass);
+  prefs.putBool("demo", false);        // a real network means live planes
+  prefs.end();
+  savedDemo = false;
+  Serial.printf("Saved Wi-Fi \"%s\"\n", ssid);
+  configTzTime(TZ_INFO, "pool.ntp.org", "time.google.com");
+  leaveDemo();
+}
+void hForget() {
+  prefs.begin("skytracker", false);    // only the network; units stay
+  prefs.remove("ssid");
+  prefs.remove("pass");
+  prefs.end();
+  savedSsid[0] = savedPass[0] = 0;
+  WiFi.disconnect();
+}
+void hDemo() {
+  xSemaphoreTake(lock, portMAX_DELAY);
+  demoInit(state, millis());
+  xSemaphoreGive(lock);
+  prefs.begin("skytracker", false);
+  prefs.putBool("demo", true);
+  prefs.end();
+  savedDemo = true;
+}
+// Things that hold text in the old language once the language is switched.
+static uint8_t shownLanguage = 0xFF;
+static void languageChanged() {
+  if (language == shownLanguage) return;
+  shownLanguage = language;
+  if (state.demo) demoRelabel(state);
+}
+void hSaveSettings() {
+  prefs.begin("skytracker", false);
+  prefs.putBool("distKm", units.distKm);
+  prefs.putBool("speedKmh", units.speedKmh);
+  prefs.putBool("altM", units.altM);
+  prefs.putUChar("lang", language);
+  prefs.end();
+  languageChanged();
+  baseStale = true;                    // range rings and scale bar change unit
+}
+// The phone settings page (web.cpp) changed something. Called with the state locked.
+void webSaved(bool homeMoved, bool keyChanged) {
+  prefs.begin("skytracker", false);
+  prefs.putBool("distKm", units.distKm);
+  prefs.putBool("speedKmh", units.speedKmh);
+  prefs.putBool("altM", units.altM);
+  prefs.putDouble("homeLat", cfg.homeLat);
+  prefs.putDouble("homeLon", cfg.homeLon);
+  prefs.putString("homeName", cfg.homeName);
+  prefs.putChar("nightStart", cfg.nightStart);
+  prefs.putChar("nightEnd", cfg.nightEnd);
+  prefs.putBool("photos", cfg.photos);
+  prefs.putString("contact", cfg.contact);
+  prefs.putString("airlabs", cfg.airlabsKey);
+  prefs.putUChar("lang", language);
+  prefs.end();
+  languageChanged();
+  baseStale = true;                    // units, home marker or its name may have changed
+  if (homeMoved) {
+    if (state.demo) demoInit(state, millis());           // simulated planes around the new home
+    appGoHome(state);
+    if (fetchTask) xTaskNotifyGive(fetchTask);
+  }
+  if (keyChanged)                      // ask again with the new key
+    for (auto& r : state.routes) { r.times = TIMES_NONE; r.hasTimes = false; r.timesMs = 0; }
+  if (!cfg.photos) { photo.hex[0] = 0; photo.state = PHOTO_NONE; }
+  Serial.println("Settings changed on the phone page");
+}
+
+// ---- Setting home: address search (in its own short task), then the map ------------------
+struct {
+  char query[64];
+  Place res[6];
+  volatile int n = -1;                 // -1 searching, -2 failed, else how many
+  volatile bool busy = false;
+} search;
+
+void searchTask(void*) {
+  Place tmp[6];
+  int n = WiFi.status() == WL_CONNECTED ? netSearchPlaces(search.query, tmp, 6) : -1;
+  if (n <= 0) {                        // nothing online (or no connection): the map's own towns
+    int m = placeSearchOffline(search.query, tmp, 6);
+    if (m > 0 || n == 0) n = m;
+  }
+  memcpy(search.res, tmp, sizeof tmp);
+  search.n = n < 0 ? -2 : n;
+  search.busy = false;
+  vTaskDelete(nullptr);
+}
+void hPlaceSearch(const char* q) {
+  if (search.busy) return;
+  snprintf(search.query, sizeof search.query, "%s", q);
+  search.n = -1;
+  search.busy = true;
+  xTaskCreatePinnedToCore(searchTask, "search", 12288, nullptr, 1, nullptr, 0);
+}
+int hPlaceResults(Place* out, int max) {
+  int n = search.n;
+  if (n > 0) memcpy(out, search.res, sizeof(Place) * (n < max ? n : max));
+  return n;
+}
+void hPlaceChosen(const Place& p) {
+  xSemaphoreTake(lock, portMAX_DELAY);
+  appStartPickHome(state, p);
+  xSemaphoreGive(lock);
+  baseStale = true;
+}
+bool hNeedHome() { return !homeAsked; }
+void rememberHomeAsked() {
+  homeAsked = true;
+  prefs.begin("skytracker", false);
+  prefs.putBool("homeAsked", true);
+  prefs.end();
+}
+void hHomeSkipped() { rememberHomeAsked(); }
+// TALLENNA / PERUUTA on the map. Called with the state locked.
+void finishPickHome(bool save) {
+  appEndPickHome(state, save);
+  if (save) webSaved(true, false);     // stores home in flash, redraws, fetches the new area
+  else baseStale = true;
+  rememberHomeAsked();
+  xTaskNotifyGive(fetchTask);
+}
+
+const WifiHooks wifiHooks = {hScan, hResults, hConnect, hStatus, hCurrent, hConnected, hForget, hDemo,
+                             hSaveSettings, hPlaceSearch, hPlaceResults, hPlaceChosen, hNeedHome, hHomeSkipped};
+
+bool connectSaved() {
+  if (!savedSsid[0]) return false;
+  WiFi.begin(savedSsid, savedPass[0] ? savedPass : nullptr);
+  for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) delay(500);
+  return WiFi.status() == WL_CONNECTED;
+}
+
+uint32_t lastInput = 0;
+bool backlightOn = true;
+
+bool isNightHour() {
+  struct tm t;
+  if (cfg.nightStart == cfg.nightEnd || !getLocalTime(&t, 0)) return false;
+  int h = t.tm_hour, a = cfg.nightStart, b = cfg.nightEnd;
+  return a > b ? (h >= a || h < b) : (h >= a && h < b);
+}
+
+// ---------------------------------------------------------------------------
+//  Staying up for months: watchdog, Wi-Fi recovery, memory check, daily restart
+// ---------------------------------------------------------------------------
+// Why the board last started (shown on the phone settings page, in the current language).
+const char* resetReasonText() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:  return TR("virta kytketty", "power on");
+    case ESP_RST_SW:       return TR("ohjelma käynnisti uudelleen", "software restart");
+    case ESP_RST_PANIC:    return TR("ohjelmavirhe (käynnistyi itse uudelleen)", "software error (restarted itself)");
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:      return TR("jumiutui (vahtikoira käynnisti uudelleen)", "hung (restarted by the watchdog)");
+    case ESP_RST_BROWNOUT: return TR("jännite notkahti (heikko laturi tai johto?)", "voltage dip (weak charger or cable?)");
+    case ESP_RST_EXT:      return TR("RESET-nappi", "RESET button");
+    default:               return TR("tuntematon", "unknown");
+  }
+}
+uint32_t uptimeMinutes() { return (uint32_t)(esp_timer_get_time() / 60000000LL); }
+
+// A planned restart at night keeps the screen dark while it starts again.
+RTC_NOINIT_ATTR uint32_t quietRestart;
+bool quietBoot = false;                // started by such a restart: wait for the clock
+const uint32_t QUIET_MAGIC = 0x51E7BEEF;
+void restartNow(const char* why, bool quiet) {
+  Serial.printf("Restarting: %s\n", why);
+  quietRestart = quiet ? QUIET_MAGIC : 0;
+  delay(200);
+  ESP.restart();
+}
+
+void watchdogInit() {
+  // 90 s: longer than the slowest round of network requests (each has a 12 s timeout
+  // and the fetch task feeds the watchdog between them).
+  esp_task_wdt_config_t c = {};
+  c.timeout_ms = 90000;
+  c.idle_core_mask = 0;
+  c.trigger_panic = true;
+  if (esp_task_wdt_reconfigure(&c) != ESP_OK) esp_task_wdt_init(&c);
+  enableLoopWDT();                     // the main loop is fed after every pass
+}
+
+// The router may restart, or (after a power cut) come up later than the device.
+// Keep trying the saved network, a little less often as time goes on.
+void wifiWatch() {
+  static uint32_t downSince = 0, lastTry = 0;
+  static int tries = 0;
+  if (!savedSsid[0] || uiActive()) {         // no network saved, or the setup screen is open
+    downSince = 0;
+    if (state.wifiDown) { xSemaphoreTake(lock, portMAX_DELAY); state.wifiDown = false; xSemaphoreGive(lock); }
+    return;
+  }
+  uint32_t now = millis();
+  if (WiFi.status() == WL_CONNECTED) {
+    if (downSince) {
+      Serial.printf("Wi-Fi back after %lu s\n", (unsigned long)((now - downSince) / 1000));
+      downSince = 0;
+      tries = 0;
+      xSemaphoreTake(lock, portMAX_DELAY);
+      state.wifiDown = false;
+      xSemaphoreGive(lock);
+      xTaskNotifyGive(fetchTask);
+    }
+    return;
+  }
+  if (!downSince) { downSince = now ? now : 1; lastTry = now; Serial.println("Wi-Fi lost"); }
+  uint32_t down = now - downSince;
+  xSemaphoreTake(lock, portMAX_DELAY);
+  if (down > 20000 && !state.wifiDown) {
+    state.wifiDown = true;
+    snprintf(state.wifiName, sizeof state.wifiName, "%s", savedSsid);
+  }
+  if (down > 120000 && !state.demo && state.nPlanes) {   // don't leave old planes frozen
+    state.nPlanes = 0;
+    state.selHex[0] = 0;
+    state.follow = false;
+  }
+  xSemaphoreGive(lock);
+  uint32_t gap = 30000UL << (tries < 3 ? tries : 3);        // 30 s, 1, 2, then every 4 min
+  if (now - lastTry > gap) {
+    lastTry = now;
+    tries++;
+    Serial.printf("Wi-Fi: trying \"%s\" again (%d)\n", savedSsid, tries);
+    WiFi.disconnect();
+    WiFi.begin(savedSsid, savedPass[0] ? savedPass : nullptr);
+  }
+  // Still nothing after half an hour: a fresh start resets the radio completely.
+  if (down > 30 * 60000UL && !state.demo && millis() - lastInput > 5 * 60000UL)
+    restartNow("no Wi-Fi for 30 min", isNightHour());
+}
+
+void healthCheck(bool idleLong) {
+  static uint32_t lastLog = 0;
+  if (millis() - lastLog > 10 * 60000UL) {
+    lastLog = millis();
+    Serial.printf("Up %lu min, free RAM %u KB (lowest %u KB), PSRAM %u KB\n", (unsigned long)uptimeMinutes(),
+                  heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024,
+                  heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024,
+                  heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024);
+  }
+  if (!idleLong || uiActive()) return;       // never in the middle of someone using it
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < 20000) restartNow("memory running low", isNightHour());
+  // Once a day at 04:00-04:10, a quick restart clears anything that has slowly built up.
+  struct tm t;
+  if (uptimeMinutes() > 20 * 60 && getLocalTime(&t, 0) && t.tm_hour == 4 && t.tm_min < 10)
+    restartNow("daily restart", isNightHour());
+}
+
+// ---------------------------------------------------------------------------
+//  Setup
+// ---------------------------------------------------------------------------
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+  Serial.println("SkyTracker starting");
+  if (!psramFound()) Serial.println("!! No PSRAM found: set Tools > PSRAM to 'OPI PSRAM'");
+  bool quiet = quietRestart == QUIET_MAGIC && esp_reset_reason() == ESP_RST_SW;
+  quietRestart = 0;
+  Serial.printf("Started because: %s%s\n", resetReasonText(), quiet ? " (quiet night restart)" : "");
+
+  loadSettings();                      // before anything is drawn
+  lock = xSemaphoreCreateMutex();
+  events = xQueueCreate(64, sizeof(Ev));
+  memset(&state, 0, sizeof state);
+  state.planes = (Plane*)heap_caps_calloc(MAX_PLANES, sizeof(Plane), MALLOC_CAP_SPIRAM);
+  state.cx = mercX(cfg.homeLon);
+  state.cy = mercY(cfg.homeLat);
+  state.zoom = START_ZOOM;
+  state.apiOk = true;
+  netInit();
+
+  baseBuf = (uint16_t*)heap_caps_malloc(SCREEN_W * SCREEN_H * 2, MALLOC_CAP_SPIRAM);
+  baseCanvas.use(baseBuf);
+  if (!boardInit()) { for (;;) delay(1000); }
+  message(APP_NAME, TR("Käynnistyy…", "Starting…"));
+  quietBoot = quiet;
+  if (quiet) {                         // planned restart at night: stay dark until touched
+    backlightOn = false;
+    state.night = true;
+    lastInput = millis() - RETURN_HOME_AFTER_MIN * 60000UL - 1;
+  } else {
+    boardBacklight(true);
+  }
+
+  // Wi-Fi: use the saved network; if there is none (or it can't be reached),
+  // show the on-screen setup so it can be chosen by touch.
+  WiFi.mode(WIFI_STA);
+  uiInit(&wifiHooks);
+  if (savedDemo) {                     // demo planes were chosen last time: keep them
+    demoInit(state, millis());
+    if (savedSsid[0]) WiFi.begin(savedSsid, savedPass[0] ? savedPass : nullptr);
+  } else if (savedSsid[0]) {
+    char sub[64];
+    snprintf(sub, sizeof sub, TR("Verkko: %s", "Network: %s"), savedSsid);
+    message(TR("Yhdistetään Wi-Fi-verkkoon…", "Connecting to Wi-Fi…"), sub);
+  }
+  if (!savedDemo && !savedSsid[0]) {
+    uiOpenWifi("", true, false);
+  } else if (!savedDemo && !connectSaved()) {
+    // Not reachable yet (e.g. the router is still starting after a power cut): show the
+    // map and keep trying in the background (wifiWatch). The network can be changed
+    // in Settings.
+    Serial.printf("\"%s\" not reachable yet: retrying in the background\n", savedSsid);
+  }
+  configTzTime(TZ_INFO, "pool.ntp.org", "time.google.com");
+
+  // Connected but home never set (e.g. Wi-Fi was filled in config.h): ask now.
+  if (!savedDemo && !homeAsked && !uiActive() && WiFi.status() == WL_CONNECTED) uiOpenHome(true);
+  webInit(&state, lock);
+  watchdogInit();
+  xTaskCreatePinnedToCore(touchTask, "touch", 4096, nullptr, 3, nullptr, 1);
+  xTaskCreatePinnedToCore(fetchLoop, "fetch", 16384, nullptr, 1, &fetchTask, 0);
+  xTaskNotifyGive(fetchTask);
+}
+
+// ---------------------------------------------------------------------------
+//  Main loop: handle touches, redraw a few times a second
+// ---------------------------------------------------------------------------
+void loop() {
+  static uint32_t lastFrame = 0;
+  webLoop();                                       // the phone settings page
+  wifiWatch();
+  Ev e;
+  bool got = false, viewChanged = false, dragging = false;
+  // Menus (settings, Wi-Fi setup) cover the whole screen and only use taps.
+  if (uiActive()) {
+    static uint32_t lastUi = 0;
+    while (xQueueReceive(events, &e, pdMS_TO_TICKS(10)) == pdTRUE) {
+      lastInput = millis();
+      if (!backlightOn) { backlightOn = true; state.night = false; boardBacklight(true); continue; }
+      if (e.type == EV_TAP) {
+        uiTap(e.x, e.y, millis(), state);        // (hooks take the lock themselves)
+        lastUi = 0;                               // redraw right away
+      }
+    }
+    uiTick(millis());
+    if (!uiBusy() && millis() - lastInput > RETURN_HOME_AFTER_MIN * 60000UL) uiClose();
+    if (!uiActive()) { baseStale = true; return; }
+    if (millis() - lastUi >= 100) {
+      lastUi = millis();
+      canvas.use(boardBackBuffer());
+      xSemaphoreTake(lock, portMAX_DELAY);
+      uiRender(canvas, state, millis());
+      xSemaphoreGive(lock);
+      boardPresent();
+    }
+    return;
+  }
+
+  while (xQueueReceive(events, &e, got ? 0 : pdMS_TO_TICKS(10)) == pdTRUE) {
+    got = true;
+    lastInput = millis();
+    if (!backlightOn) {                            // first touch just wakes the screen
+      backlightOn = true;
+      state.night = false;
+      boardBacklight(true);
+      baseStale = true;
+      xTaskNotifyGive(fetchTask);
+      xQueueReset(events);
+      break;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    float cx = state.cx, cy = state.cy;
+    int z = state.zoom;
+    float m = metresPerPx(state.zoom);
+    switch (e.type) {
+      case EV_DRAG:                                // the map follows the finger
+        appPan(state, e.dx, e.dy);
+        if (state.zoom == baseZoom) {              // slide the cached map along
+          float fx = (baseCx - state.cx) / m, fy = (state.cy - baseCy) / m;
+          int ix = lroundf(fx), iy = lroundf(fy);
+          if (ix || iy) { shiftBase(ix, iy); baseCx -= ix * m; baseCy += iy * m; }
+        }
+        dragging = true;
+        break;
+      case EV_DRAG_END: baseStale = true; break;
+      case EV_ZOOM: appZoom(state, e.dx); break;
+      case EV_TAP:
+        switch (appTap(state, e.x, e.y, millis(), requestRouteLocked)) {
+          case HIT_SETTINGS: uiOpenSettings(); break;
+          case HIT_PICK_SAVE: finishPickHome(true); break;
+          case HIT_PICK_CANCEL: finishPickHome(false); break;
+          default: break;
+        }
+        break;
+    }
+    viewChanged |= cx != state.cx || cy != state.cy || z != state.zoom;
+    xSemaphoreGive(lock);
+  }
+  if (viewChanged && !dragging) xTaskNotifyGive(fetchTask);   // fetch the new area
+  if (got && e.type == EV_DRAG_END) xTaskNotifyGive(fetchTask);
+
+  uint32_t idle = millis() - lastInput;
+  bool idleLong = idle > RETURN_HOME_AFTER_MIN * 60000UL;
+
+  healthCheck(idleLong);
+
+  // Night: screen off until a tap.
+  if (isNightHour() && idleLong) {
+    if (backlightOn) {
+      backlightOn = false;
+      state.night = true;
+      boardBacklight(false);
+    }
+    delay(50);
+    return;
+  }
+  if (!backlightOn) {                              // night is over (or its hours were changed)
+    struct tm t;
+    if (quietBoot && !getLocalTime(&t, 0) && millis() < 180000) { delay(50); return; }  // clock not set yet
+    quietBoot = false;
+    backlightOn = true;
+    state.night = false;
+    boardBacklight(true);
+    baseStale = true;
+    xTaskNotifyGive(fetchTask);
+  }
+
+  xSemaphoreTake(lock, portMAX_DELAY);
+  bool away = state.zoom != START_ZOOM || state.selHex[0] ||
+              fabsf(state.cx - mercX(cfg.homeLon)) > 1 || fabsf(state.cy - mercY(cfg.homeLat)) > 1;
+  if (away && idleLong && !state.follow && !state.pickHome) { appGoHome(state); xTaskNotifyGive(fetchTask); }
+  Plane* sel = state.selected();
+  if (sel && !state.route(sel->cs)) requestRouteLocked(sel->cs);   // retry failed lookups
+  // Departure/arrival times for the selected flight: once, then refreshed now and then.
+  if (Route* r = sel && cfg.airlabsKey[0] && !state.demo ? state.route(sel->cs) : nullptr) {
+    uint32_t age = millis() - r->timesMs;
+    bool due = (r->times == TIMES_NONE && (!r->timesMs || age > 60000)) ||
+               (r->times == TIMES_KNOWN && age > TIMES_REFRESH_MIN * 60000UL);
+    if (r->state == ROUTE_KNOWN && due) { r->times = TIMES_PENDING; xTaskNotifyGive(fetchTask); }
+  }
+  // A newly selected plane: fetch its photo (not in demo mode: those planes are simulated).
+  if (sel && cfg.photos && !state.demo && strcmp(photo.hex, sel->hex)) {
+    snprintf(photo.hex, sizeof photo.hex, "%s", sel->hex);
+    snprintf(photo.reg, sizeof photo.reg, "%s", sel->reg);
+    photo.state = PHOTO_LOADING;
+    photo.hidden = false;
+    xTaskNotifyGive(fetchTask);
+  }
+  if (!sel && photo.hex[0]) { photo.hex[0] = 0; photo.state = PHOTO_NONE; }
+  if (state.follow && sel) {
+    state.advance(millis());
+    state.cx = sel->x;
+    state.cy = sel->y;
+  }
+  xSemaphoreGive(lock);
+
+  static uint32_t lastReconnect = 0;
+  if (WiFi.status() != WL_CONNECTED && !state.demo && savedSsid[0] && millis() - lastReconnect > 30000) {
+    lastReconnect = millis();
+    WiFi.reconnect();
+  }
+  if (got || millis() - lastFrame >= FRAME_MS) {
+    lastFrame = millis();
+    drawFrame();
+  }
+}
