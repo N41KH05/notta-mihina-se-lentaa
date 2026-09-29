@@ -89,98 +89,84 @@ footer p { margin: 0 0 8px; }
     <div>
       <h1>Notta mihinä se lentää?</h1>
       <p class="dialect">Finnish for “So, where's that one flying to?”</p>
-      <p class="lede">A live flight-tracking display for the Waveshare ESP32-S3-Touch-LCD-7. Aircraft around your location on a touch map, with route, flight data and aircraft photos.</p>
+      <p class="lede">A 7" touchscreen that shows the planes flying around you. Tap one to see where it's going, how high and fast it is, and a photo of the aircraft. It runs on a single off-the-shelf ESP32 board.</p>
       <div class="btns">
-        <a class="btn primary" href="simulator.html?v=10">▶ Try the demo</a>
-        <a class="btn ghost" href="https://github.com/N41KH05/notta-mihina-se-lentaa">View on GitHub</a>
+        <a class="btn primary" href="simulator.html?v=10">Try it in the browser</a>
+        <a class="btn ghost" href="https://github.com/N41KH05/notta-mihina-se-lentaa">Source on GitHub</a>
       </div>
     </div>
-    <img src="img/hero.png" width="1016" height="696" alt="The device showing a selected flight: route Stockholm to Oulu, altitude, speed and a photo card">
+    <img src="img/hero.png" width="1016" height="696" alt="The display with a selected flight from Stockholm to Oulu">
   </div>
 </header>
 
 <main>
 <section class="wrap" id="features">
-  <h2>Features</h2>
-  <p class="sub">One off-the-shelf board, a Wi-Fi connection and free community flight data. No subscriptions and no soldering. The user interface is in English, with Finnish as an option.</p>
+  <h2>What it does</h2>
+  <p class="sub">It uses the Waveshare ESP32-S3-Touch-LCD-7 and free community flight data. The screen is in English, and can be switched to Finnish.</p>
 
   <div class="feature">
-    <img class="shot" src="img/map.png" width="800" height="480" alt="Live map around home with planes and range rings" loading="lazy">
+    <img class="shot" src="img/map.png" width="800" height="480" alt="Map with planes around Helsinki" loading="lazy">
     <div>
-      <h3>Live map</h3>
-      <p>Aircraft positions update every four seconds and are interpolated between updates. The embedded map covers coastlines, lakes, towns, airports and runways. <b>Pan and pinch-zoom</b> from airport level to the whole world.</p>
-      <div class="alt"><span>Colour = altitude:</span><span>ground</span><span class="bar" aria-hidden="true"></span><span>cruise</span></div>
+      <h3>The map</h3>
+      <p>Positions update every four seconds, and the planes keep moving smoothly in between. The map has coastlines, lakes, towns, airports and runways, and you can drag and pinch from a single airport out to the whole world.</p>
+      <div class="alt"><span>Colour is altitude:</span><span>ground</span><span class="bar" aria-hidden="true"></span><span>cruise</span></div>
     </div>
   </div>
 
   <div class="feature">
-    <img class="shot" src="img/selected.png" width="800" height="480" alt="A selected plane with its route, details and photo card" loading="lazy">
+    <img class="shot" src="img/selected.png" width="800" height="480" alt="A selected plane with its route and photo" loading="lazy">
     <div>
-      <h3>Flight details</h3>
-      <p>Selecting an aircraft shows the <b>route</b>, estimated arrival, altitude, vertical rate, ground speed, track, distance and aircraft type.</p>
-      <p>An <b>aircraft photo</b> is loaded from Planespotters.net, with photographer credit and a QR link to the source page.</p>
+      <h3>Tap a plane</h3>
+      <p>You get the route, an arrival estimate, altitude, climb rate, speed, heading, distance and aircraft type.</p>
+      <p>The photo comes from Planespotters.net, with the photographer's name and a QR code that opens the photo page on your phone.</p>
     </div>
   </div>
 
   <div class="feature">
-    <img class="shot" src="img/zoomout.png" width="800" height="480" alt="Zoomed out over Finland and Sweden with place names" loading="lazy">
+    <img class="shot" src="img/zoomout.png" width="800" height="480" alt="Zoomed out over the Baltic Sea" loading="lazy">
     <div>
-      <h3>Localisation</h3>
-      <p>The interface and map labels are in <b>English or Finnish</b>, each with its own number formatting. The language is switched in Settings or on the phone page.</p>
-      <p>Selectable <b>units</b>: km or nautical miles, km/h or knots, feet or metres.</p>
+      <h3>English or Finnish</h3>
+      <p>The whole interface and the map labels switch between the two, number formats included. Units are up to you too: km or nautical miles, km/h or knots, feet or metres.</p>
     </div>
   </div>
 
   <div class="feature">
-    <img class="shot" src="img/home_pick.png" width="800" height="480" alt="Setting home: a crosshair on the map after an address search" loading="lazy">
+    <img class="shot" src="img/home_pick.png" width="800" height="480" alt="Setting home with a crosshair on the map" loading="lazy">
     <div>
-      <h3>Home location setup</h3>
-      <p>On first start the device asks for the home location. Addresses are resolved with <b>OpenStreetMap Nominatim</b>, with an offline fallback to the built-in town list.</p>
-      <p>The result is then fine-tuned on the map with a crosshair.</p>
+      <h3>Setting home</h3>
+      <p>On first start it asks where home is. Type an address, pick the result (it uses OpenStreetMap's search), then drag the map until the cross is on your house.</p>
     </div>
   </div>
 
   <div class="feature">
     <img class="shot phone" src="img/phone.png" width="780" height="1688" alt="The settings page on a phone" loading="lazy">
     <div>
-      <h3>Configuration</h3>
-      <p>Wi-Fi is configured on the touchscreen with an on-screen keyboard.</p>
-      <p>Further options are available on a <b>web settings page</b> served on the local network: home location, night schedule, photos and an optional AirLabs API key for scheduled times. The page address and a QR code are shown in the device settings.</p>
+      <h3>Settings from your phone</h3>
+      <p>Wi-Fi is set up on the touchscreen. Everything else can also be changed from a small web page on the device: home, night hours, photos, language and units, and an optional AirLabs key for timetable data. Its address and a QR code are in the device's settings.</p>
+      <p>It's meant to run for months without attention: it reconnects after power and router cuts, restarts itself if something hangs, and turns the screen off at night.</p>
     </div>
   </div>
 </section>
 
-<section class="wrap" id="reliable">
-  <h2>Reliability</h2>
-  <p class="sub">Designed for long-term unattended operation.</p>
-  <div class="cards">
-    <div class="card"><h3>Network recovery</h3><p>Automatic reconnection with back-off after power or network outages.</p></div>
-    <div class="card"><h3>Watchdog</h3><p>A 90-second task watchdog, plus a scheduled daily restart during idle night hours.</p></div>
-    <div class="card"><h3>Night mode</h3><p>Configurable schedule: the screen switches off at night and back on in the morning. Touch wakes it.</p></div>
-    <div class="card"><h3>Persistent settings</h3><p>All settings are stored in flash and survive power loss and firmware updates.</p></div>
-  </div>
-</section>
-
 <section class="wrap" id="build">
-  <h2>Getting started</h2>
-  <p class="sub">No soldering or additional wiring is required.</p>
+  <h2>Building one</h2>
+  <p class="sub">No soldering. You need the board (touch version), a USB-C cable and a 5 V phone charger.</p>
   <ol class="steps">
-    <li><b>Hardware:</b> a <a href="https://www.waveshare.com/esp32-s3-touch-lcd-7.htm">Waveshare ESP32-S3-Touch-LCD-7</a> (capacitive touch version), a USB-C cable and a 5 V, 1 A power supply.</li>
-    <li><b>Toolchain:</b> Arduino IDE 2 with the Espressif ESP32 board package (3.x) and the libraries Adafruit GFX, ArduinoJson and JPEGDEC.</li>
-    <li><b>Build and upload</b> <code>SkyTracker/SkyTracker.ino</code> with the board options from the guide (16 MB flash, OPI PSRAM, custom partitions).</li>
-    <li><b>First start:</b> select a Wi-Fi network and set the home location on the device.</li>
+    <li>Install the Arduino IDE 2 with the ESP32 board package 3.x and the libraries Adafruit GFX, ArduinoJson and JPEGDEC.</li>
+    <li>Open <code>SkyTracker/SkyTracker.ino</code>, set the board options from the guide (16 MB flash, OPI PSRAM, custom partitions) and upload.</li>
+    <li>Pick your Wi-Fi and home on the screen.</li>
   </ol>
-  <p style="margin-top:20px"><a class="btn primary" href="https://github.com/N41KH05/notta-mihina-se-lentaa/blob/main/GUIDE.md">Installation guide</a></p>
+  <p style="margin-top:20px"><a class="btn primary" href="https://github.com/N41KH05/notta-mihina-se-lentaa/blob/main/GUIDE.md">Read the guide</a></p>
 </section>
 
 <section class="wrap" id="case">
-  <h2>Enclosure</h2>
+  <h2>Case</h2>
   <div class="case">
-    <img class="shot" src="img/case.png" width="1800" height="1400" alt="Renders of the 3D-printed case from the front, back and side, with the USB-C openings in the side wall" loading="lazy">
+    <img class="shot" src="img/case.png" width="1800" height="1400" alt="Renders of the 3D-printed case" loading="lazy">
     <div>
-      <p>A 3D-printable, fully enclosed case with two fold-out legs that hold the display at a 20° tilt.</p>
-      <p>The electronics are fully enclosed, with only narrow ventilation slots at the back. The USB-C ports are reached through openings in the side wall, so the cable plugs straight in. It prints without supports, and the design is a parametric OpenSCAD model that can be adjusted to your board.</p>
-      <p><a href="https://github.com/N41KH05/notta-mihina-se-lentaa/tree/main/case">Enclosure files and print guide →</a></p>
+      <p>A printable case that closes the board in completely, with two fold-out legs that lean the screen back 20°. The USB-C ports are reached from the side.</p>
+      <p>It's a parametric OpenSCAD model and prints without supports. Measure your board first; the print guide says what to check.</p>
+      <p><a href="https://github.com/N41KH05/notta-mihina-se-lentaa/tree/main/case">Case files and print guide</a></p>
     </div>
   </div>
 </section>
@@ -188,8 +174,8 @@ footer p { margin: 0 0 8px; }
 
 <footer>
   <div class="wrap">
-    <p><b>Data:</b> live positions from <a href="https://adsb.fi">adsb.fi</a>, <a href="https://airplanes.live">airplanes.live</a> and <a href="https://adsb.lol">adsb.lol</a>, routes from <a href="https://www.adsbdb.com">adsbdb</a>, photos from <a href="https://www.planespotters.net">Planespotters.net</a>, optional timetables from <a href="https://airlabs.co">AirLabs</a>, address search from <a href="https://nominatim.org">Nominatim</a> (© OpenStreetMap contributors). The map is from <a href="https://www.naturalearthdata.com">Natural Earth</a> and airports from <a href="https://ourairports.com">OurAirports</a>.</p>
-    <p>Code released under the MIT License. Not affiliated with Waveshare or any of the data services.</p>
+    <p>Positions from <a href="https://adsb.fi">adsb.fi</a>, <a href="https://airplanes.live">airplanes.live</a> and <a href="https://adsb.lol">adsb.lol</a>, routes from <a href="https://www.adsbdb.com">adsbdb</a>, photos from <a href="https://www.planespotters.net">Planespotters.net</a>, timetables from <a href="https://airlabs.co">AirLabs</a>, address search from <a href="https://nominatim.org">Nominatim</a> (© OpenStreetMap contributors). Map from <a href="https://www.naturalearthdata.com">Natural Earth</a>, airports from <a href="https://ourairports.com">OurAirports</a>.</p>
+    <p>MIT licensed. Not affiliated with Waveshare or any of the data services.</p>
   </div>
 </footer>
 </body>

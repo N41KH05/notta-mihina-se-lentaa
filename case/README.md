@@ -1,89 +1,58 @@
-# Enclosure with kickstand
+# Case
 
-A 3D-printable, fully enclosed case for the Waveshare ESP32-S3-Touch-LCD-7 (touch version). Two fold-out legs hold the screen at a 20° tilt. The electronics are completely covered: the back plate has only narrow 2 mm ventilation slots, and the board's two USB-C ports are reached through openings in the side wall, so the cable plugs straight in from the side.
+A printable case for the Waveshare ESP32-S3-Touch-LCD-7 (touch version). It's closed all round apart from some narrow air slots in the back, two fold-out legs tilt the screen back 20°, and the USB-C ports are reachable through openings in the side wall.
 
 ![preview](preview.png)
 
-## Verify before printing
+## Measure first
 
-The model is based on Waveshare's published outline dimensions (glass 192.96 × 110.76 mm). Check the following on your board with calipers or a ruler; each one is a parameter at the top of `skytracker_case.scad`.
+The model is drawn from Waveshare's outline drawing (glass 192.96 × 110.76 mm) and photos, not from a board on my desk, so check these before you print. Each one is a variable at the top of `skytracker_case.scad`.
 
-1. **Glass thickness** (`glass_t`, set to 1.8 mm). Measure the edge of the touch glass only. The body clamps the glass by exactly this much.
-2. **Depth behind the glass** (`board_depth`, set to 22 mm). Lay the screen face down and measure from the back of the glass to the top of the tallest part: the screw terminals, connectors or the ESP32 module. Add 1–2 mm.
-3. **Size of the screen module and board behind the glass** (`module_w` 165, `module_h` 100). The walls and screw posts stay outside this area.
-4. **The strip at the left and right edges.** On the back, the glass sticks out past the screen module. The body's side rails need at least **10 mm** of free glass there, with nothing glued or cabled on it.
-5. **Where the USB-C ports are.** Both ports (**USB** and **UART1**) are on one edge of the board: on the left when you look at the back of the board, so on the **right when you look at the screen**. The side wall has an opening for each. Measure, with the glass facing down:
-   - `port_y`: the height of each port's centre above the bottom edge of the glass (set to 49 mm for USB and 73 mm for UART1, estimated from Waveshare's photos);
-   - `port_depth`: how far the port's centre sits behind the back of the glass (set to 9 mm).
+1. `glass_t` (1.8 mm): thickness of the touch glass at its edge. The body clamps exactly this much.
+2. `board_depth` (22 mm): with the screen face down, the height from the back of the glass to the tallest part on the board. Add a millimetre or two.
+3. `module_w` × `module_h` (165 × 100 mm): the screen module and board behind the glass. The walls and screw posts stay outside it.
+4. The bare strip of glass at the left and right edges on the back. The side rails sit on it and need about 10 mm with nothing stuck to it.
+5. The USB-C ports. Both (USB and UART1) are on the same edge: left when you look at the back of the board, so right when you look at the screen. `port_y` is the height of each port's centre above the bottom edge of the glass (49 and 73 mm, estimated from photos), and `port_depth` is how far the centre sits behind the glass (9 mm).
 
-   The openings are 13.5 × 8 mm, so the moulded grip of an ordinary USB-C plug can go a little way in. A plug with a very bulky grip may not reach far enough; a slim one or a **right-angle (90°) plug** pointing down is neatest.
+The port openings are 13.5 × 8 mm, enough for the grip of a normal USB-C plug to go in a little. Very chunky plugs may not reach; a slim or right-angle one is safest.
 
-## Parts to print
+## Printing
 
-| File | How many | On the bed |
-|---|---|---|
-| `stl/frame.stl` | 1 | front face down (the smooth side) |
-| `stl/body.stl` | 1 | as exported: rails flat on the bed, hinge tabs and walls up |
-| `stl/back.stl` | 1 | outer face down |
-| `stl/leg.stl` | **2** | as exported (the same leg fits both sides) |
+Print `stl/frame.stl` front face down, `stl/body.stl` as exported (rails on the bed), `stl/back.stl` outer face down, and `stl/leg.stl` twice. No supports.
 
-- **Printer:** the body is 210 × 130 mm, so it needs a bed of at least about 215 × 135 mm. Most full-size printers are fine (Prusa, Ender 3, Bambu A1/P1/X1). A Bambu A1 mini is too small.
-- **Material:** PETG is best because it's tougher and doesn't soften in a sunny window. PLA works too.
-- **Settings:**
-  - 0.2 mm layers
-  - 3 walls (perimeters)
-  - 25 % infill
-  - no supports needed
-- **Filament:** about 130–150 g in total.
+The body is 210 × 130 mm, so you need a bed of roughly 215 × 135 or bigger; an A1 mini is too small. I'd use PETG so it doesn't go soft in a sunny window, but PLA is fine. 0.2 mm layers, 3 walls and 25 % infill work, and the whole thing takes about 130–150 g.
 
 ## Hardware
 
-- 4 × **M3×8 countersunk** screws (DIN 7991), for the front. Not longer.
-- 2 × **M3×12** screws with any head, for the leg hinges
-- 4 × **M3×10** pan or button head screws, for the back plate. They cut their own thread in the plastic.
-- 6 × **M3 nuts**
-- 4 **rubber feet**, under the two front feet and the two leg feet. They stop it sliding if the table gets bumped.
-- Optional: a strip of 1 mm foam tape, if the glass rattles
+- 4 × M3×8 countersunk (DIN 7991) for the front bezel. Not longer.
+- 2 × M3×12, any head, for the leg hinges
+- 4 × M3×10 pan or button head for the back plate. These cut their own thread.
+- 6 × M3 nuts
+- 4 small rubber feet
+- Optionally some 1 mm foam tape if the glass rattles
 
 ## Assembly
 
-1. Push the nuts into the body:
-   - 4 into the hex pockets on the back of the side rails (for the front screws)
-   - 2 into the hex pockets on the **inside** of the side walls, level with the hinge tabs
-   A dab of glue keeps them in place.
-2. Lay the bezel face down on a soft cloth. Drop the screen in, glass first. 
-3. Put the body over the screen. Its rails rest on the strip of glass beside the screen. Screw the 4 countersunk screws in from the front.
-4. Tighten evenly until the glass is held firmly, but don't force them. If the glass still moves, add foam tape under the rails.
-5. Fit the legs: each goes on the outside of its hinge tab, with the recessed hole facing out. Screw an M3×12 through the leg and tab into the nut inside the wall. Tighten until the leg stays where you put it.
-6. Screw the back plate on with the 4 M3×10 screws. Stop as soon as they're snug: they cut their own thread, and overtightening strips it.
-7. Stick the rubber feet on, fold the legs out until they stop (at 55°), and stand it up.
-8. Plug the USB-C cable into the **USB** opening (the lower one) on the right side. It powers the device, and the same port is used for firmware updates and the serial monitor. The **UART1** port above it also works for power and uploads.
+1. Press 4 nuts into the hex pockets on the back of the side rails and 2 into the pockets on the inside of the side walls, level with the hinge tabs. A drop of glue holds them.
+2. Put the bezel face down on a cloth and drop the screen in, glass first.
+3. Put the body over it so the rails rest on the glass edges, and screw in the 4 countersunk screws from the front. Tighten evenly until the glass is held; if it still moves, add foam tape under the rails.
+4. Each leg goes on the outside of its hinge tab with the recessed hole facing out. Put an M3×12 through the leg and tab into the nut, and tighten until the leg stays where you put it.
+5. Screw on the back plate. Stop when the screws are snug, or you'll strip the plastic.
+6. Stick the rubber feet under the front feet and the leg ends, fold the legs out to their stop and stand it up.
+7. Plug the cable into the lower opening on the right (the USB port). That port does power, uploads and the serial monitor. UART1 above it also works for power and uploads.
 
-The BOOT and RESET buttons and the memory card slot end up inside the case. They aren't needed day to day. Firmware updates go through the side ports, and the case doesn't need opening. If you ever need them, take off the back plate (4 screws).
+BOOT, RESET and the SD card slot end up inside. You don't need them normally; updates go in through the side port. If you do, the back plate comes off with 4 screws.
 
-## Placement and durability
+With the legs out, the balance point is about 3 cm behind the front feet and 8 cm in front of the leg feet, so tapping the screen won't tip it over. Let the cable drop straight down beside the case; the legs are well behind the plug.
 
-- **Cable routing:** the cable leaves the right side; let it drop to the table and run it along behind the device. The legs sit behind the ports and stay clear of the plug. A braided USB-C cable or a cable guard is more durable than a standard cable.
-- **Stability:** the case rests on its front feet and the leg feet. The centre of mass is about 3 cm inside the front support and 8 cm inside the rear support, so normal touch input will not tip it. Rubber feet prevent it from sliding.
-- **No loose parts:** all screws are secured with nuts or thread into the plastic.
+## Changing it
 
-## Changing the design
+Everything is a variable at the top of the file: `tilt`, `pivot_y` (where the legs attach), `lift` (front feet), `board_depth`, `port_y` / `port_depth` / `port_side`, `vent_w`, and `back_cable` if you'd rather have a cable hole in the back plate as well. The leg length and stop are recalculated so the screen still stands at `tilt`.
 
-Every size is a setting at the top of `skytracker_case.scad`:
+Change a value in [OpenSCAD](https://openscad.org) and export with F6 then F7, or export all parts at once:
 
-- `tilt`: how far the screen leans back
-- `pivot_y`: where the legs are attached
-- `lift`: height of the front feet
-- `board_depth`: depth behind the glass
-- `port_y`, `port_depth`, `port_side`: where the USB-C openings are
-- `back_cable`: also cut the old cable opening in the back plate (off by default)
-- `vent_w`: width of the air slots
+```
+python export_stl.py glass_t=1.6 board_depth=18
+```
 
-The leg length and the stop are recalculated automatically, so the screen always stands at the chosen angle.
-
-1. Open the file in [OpenSCAD](https://openscad.org) (free), change a number, then press F6 and F7 to export an STL.
-2. Or, with OpenSCAD installed, export all parts at once:
-   ```
-   python export_stl.py glass_t=1.6 board_depth=18
-   ```
-3. `part = "assembly"` shows the whole thing standing up with a dummy screen, and `part = "assembly_folded"` shows it with the legs folded.
+Set `part = "assembly"` (or `"assembly_folded"`) to see the whole thing with a dummy screen.
