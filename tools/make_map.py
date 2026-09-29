@@ -7,7 +7,10 @@ Bake the map into the firmware: writes SkyTracker/mapdata.cpp.
   * a simple whole-world layer for zooming right out.
 
 Usage:  python make_map.py 60.1699 24.9384      (lat lon of home)
-Data:   Natural Earth 1:10m and OurAirports, downloaded from GitHub once.
+Data:   the detailed region's coastline and islands come from OpenStreetMap
+        (land and water polygons as packaged by the geo-maps project, from npm);
+        lakes, the world layer, borders and towns from Natural Earth 1:10m, airports
+        from OurAirports. Everything is downloaded once into tools/raw.
 """
 import csv
 import json
@@ -18,7 +21,7 @@ import urllib.request
 
 import numpy as np
 
-from geo import clip_ring, decimate, split_line, to_merc
+from geo import clip_ring, decimate, split_line, to_merc, to_merc_inv
 import finnish_names
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -35,12 +38,21 @@ FILES = {
     "airports": OA + "airports.csv", "runways": OA + "runways.csv",
     "countries": NE + "ne_10m_admin_0_countries.geojson",
 }
+# OpenStreetMap land and water polygons (© OpenStreetMap contributors, ODbL),
+# simplified to about 10 m by https://github.com/simonepri/geo-maps.
+NPM = "https://registry.npmjs.org/@geo-maps/{0}/-/{0}-0.6.0.tgz"
+# (Only the land: OSM's simplified lake polygons break the big lakes into pieces and
+# turn small ones into triangles, so the lakes still come from Natural Earth.)
+OSM = {"osm_land": "earth-coastlines-10m"}
 
 REGION_KM = 1000                 # detailed area: this far around home
 REGION_UNIT = 80                 # metres per coordinate step in the region layer
 WORLD_UNIT = 612                 # metres per step in the world layer
 WORLD_M = 20037508.34
-LODS = {"fine": 90.0, "coarse": 2500.0}
+# Levels of detail: how far apart kept points are (m), and the smallest island
+# (km2) worth drawing at that level. fine: zoom 9-11, mid: 7-8, coarse: 5-6.
+LODS = {"fine": 90.0, "mid": 600.0, "coarse": 2500.0}
+MIN_ISLAND = {"fine": 0.02, "mid": 1.0, "coarse": 20.0}
 WORLD_DECIMATE = 15000.0
 TILE = 600_000
 
@@ -56,6 +68,43 @@ def fetch(name):
             f.write(r.read())
         os.replace(path + ".part", path)
     return path
+
+
+def osm_rings(name, lonlat_box):
+    """Rings of an OSM polygon set that reach into lonlat_box (lon0, lat0, lon1, lat1)."""
+    import tarfile
+    path = os.path.join(RAW, OSM[name] + ".geo.json")
+    if not os.path.exists(path):
+        os.makedirs(RAW, exist_ok=True)
+        tgz = path + ".tgz"
+        print("  downloading", OSM[name], flush=True)
+        with urllib.request.urlopen(NPM.format(OSM[name]), timeout=300) as r, open(tgz, "wb") as f:
+            f.write(r.read())
+        with tarfile.open(tgz) as t:
+            with t.extractfile("package/map.geo.json") as src, open(path, "wb") as dst:
+                dst.write(src.read())
+        os.remove(tgz)
+    with open(path, encoding="utf-8") as f:
+        geoms = json.load(f)["geometries"]
+    for g in geoms:
+        polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
+        for poly in polys:
+            for i, ring in enumerate(poly):
+                a = np.asarray(ring, dtype=np.float64)
+                if len(a) < 4:
+                    continue
+                if (a[:, 0].max() < lonlat_box[0] or a[:, 0].min() > lonlat_box[2] or
+                        a[:, 1].max() < lonlat_box[1] or a[:, 1].min() > lonlat_box[3]):
+                    continue
+                yield proj(a), i == 0
+
+
+def ring_km2(ring):
+    """Area of a Web Mercator ring in km2 (corrected for the map's stretch)."""
+    x, y = ring[:, 0], ring[:, 1]
+    a = 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+    lat = 2 * math.atan(math.exp(y.mean() / 6378137.0)) - math.pi / 2
+    return a * math.cos(lat) ** 2 / 1e6
 
 
 def features(name):
@@ -114,6 +163,7 @@ class Layer:
     def __init__(self, ox, oy, unit):
         self.ox, self.oy, self.unit = ox, oy, unit
         self.pts = []
+        self.npts = 0
         self.groups = {}
 
     def q(self, arr):
@@ -128,8 +178,9 @@ class Layer:
         q = self.q(arr)
         if len(q) < (4 if closed else 2):
             return
-        start = sum(len(p) for p in self.pts)
+        start = self.npts
         self.pts.append(q)
+        self.npts += len(q)
         b = (q[:, 0].min(), q[:, 1].min(), q[:, 0].max(), q[:, 1].max())
         self.groups.setdefault(group, []).append((start, len(q), *b, flags))
 
@@ -148,16 +199,29 @@ def main():
     wbox = (-WORLD_M, -WORLD_M * 0.999, WORLD_M, WORLD_M * 0.999)
     print(f"Map around {lat:.4f}, {lon:.4f}: detailed within {REGION_KM} km, plus the world")
 
-    print("Land and lakes...")
-    land = features("land") + features("islands")
-    for ring, outer in rings(land):
-        c = clip_ring(ring, *box)
-        if len(c) >= 4:
+    print("Land and lakes: OpenStreetMap for the region, Natural Earth for the world...")
+    # the region box in degrees (a little bigger), to skip far-away rings quickly
+    lo0, la0 = to_merc_inv(box[0], box[1])
+    lo1, la1 = to_merc_inv(box[2], box[3])
+    llbox = (lo0 - 1, la0 - 1, lo1 + 1, la1 + 1)
+    coast_rings = []
+    for name, flag in (("osm_land", 0),):
+        for ring, outer in osm_rings(name, llbox):
+            c = clip_ring(ring, *box)
+            if len(c) < 4:
+                continue
+            area = ring_km2(ring)
+            if name == "osm_land":
+                coast_rings.append((ring, area))
             for lod, d in LODS.items():
+                if area < MIN_ISLAND[lod]:
+                    continue
                 dd = decimate(c, d, closed=True)
                 if len(dd) >= 4:
                     for t in (tiles(dd) if lod == "fine" else [dd]):
-                        reg.add("fill_" + lod, t, 0, closed=True)
+                        reg.add("fill_" + lod, t, flag, closed=True)   # flag 1: lake outline
+    land = features("land") + features("islands")
+    for ring, outer in rings(land):
         w = decimate(clip_ring(ring, *wbox), WORLD_DECIMATE, closed=True)
         if len(w) >= 4:
             wld.add("fill", w, 0, closed=True)
@@ -178,12 +242,16 @@ def main():
            for poly in ([f["geometry"]["coordinates"]] if f["geometry"]["type"] == "Polygon"
                         else f["geometry"]["coordinates"]) for r in poly[:1]]
     for name, feats in (("coast", features("coast") + isl), ("border", features("borders"))):
-        for ln in lines(feats):
+        region_lines = coast_rings if name == "coast" else [(ln, 1e9) for ln in lines(feats)]
+        for ln, area in region_lines:              # the region: OSM coastline, NE borders
             for run in split_line(ln, *box):
                 for lod, d in LODS.items():
+                    if area < MIN_ISLAND[lod]:
+                        continue
                     dd = decimate(run, d)
                     for i in range(0, len(dd) - 1, 300):
                         reg.add(f"{name}_{lod}", dd[i:i + 301])
+        for ln in lines(feats):                    # the world: Natural Earth
             w = decimate(ln, WORLD_DECIMATE)
             if len(w) >= 2:
                 wld.add(name, w)
@@ -324,8 +392,13 @@ def encode_shape(q):
     return out
 
 
-def emit_layer(out, prefix, layer, groups):
-    """Points as a byte stream (see encode_shape); each shape records where it starts."""
+GRID = 32     # the region layer's shapes are indexed in a GRID x GRID grid
+
+
+def emit_layer(out, prefix, layer, groups, grid=False):
+    """Points as a byte stream (see encode_shape); each shape records where it starts.
+    With grid: also, per grid cell, the shapes whose bounding box touches it, so the
+    renderer only looks at the shapes near the view."""
     data = bytearray()
     shapes = {}
     pts = np.concatenate(layer.pts) if layer.pts else np.zeros((0, 2), np.int16)
@@ -346,7 +419,28 @@ def emit_layer(out, prefix, layer, groups):
             out.append("{%d,%d,%d,%d,%d,%d,%d}," % tuple(int(v) for v in r))
         out.append("{0,0,0,0,0,0,0}};")
         out.append(f"const uint32_t {prefix}_{g.upper()}_N = {len(rows)};")
+        if grid:
+            cells = [[] for _ in range(GRID * GRID)]
+            for i, r in enumerate(rows):
+                cx0, cy0, cx1, cy1 = (grid_cell(v) for v in r[2:6])
+                for cy in range(cy0, cy1 + 1):
+                    for cx in range(cx0, cx1 + 1):
+                        cells[cy * GRID + cx].append(i)
+            starts, idx = [0], []
+            for c in cells:
+                idx += c
+                starts.append(len(idx))
+            out.append(f"const uint32_t {prefix}_{g.upper()}_CELLS[] = {{" + ",".join(map(str, starts)) + "};")
+            out.append(f"const uint32_t {prefix}_{g.upper()}_IDX[] = {{")
+            for i in range(0, len(idx), 40):
+                out.append(",".join(map(str, idx[i:i + 40])) + ",")
+            out.append("0};")
     return len(data)
+
+
+def grid_cell(v):
+    """Grid cell (0..GRID-1) of a region-layer coordinate (-32768..32767)."""
+    return min(GRID - 1, max(0, (int(v) + 32768) * GRID // 65536))
 
 
 def write(reg, wld, places, airports, runways, labels, lat, lon):
@@ -356,8 +450,8 @@ def write(reg, wld, places, airports, runways, labels, lat, lon):
            f"const double MAP_HOME_LAT = {lat!r};", f"const double MAP_HOME_LON = {lon!r};",
            f"const float REG_OX = {reg.ox:.1f}f;", f"const float REG_OY = {reg.oy:.1f}f;",
            f"const float REG_UNIT = {reg.unit}.0f;", f"const float WLD_UNIT = {WORLD_UNIT}.0f;", ""]
-    size = emit_layer(out, "REG", reg, ["fill_fine", "fill_coarse", "coast_fine", "coast_coarse",
-                                         "border_fine", "border_coarse"])
+    out.append(f"const int REG_GRID = {GRID};")
+    size = emit_layer(out, "REG", reg, [f"{k}_{lod}" for k in ("fill", "coast", "border") for lod in LODS], grid=True)
     size += emit_layer(out, "WLD", wld, ["fill", "coast", "border"])
 
     # Each name is stored as "Finnish\0English\0"; the English part is empty

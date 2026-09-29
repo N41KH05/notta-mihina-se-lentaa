@@ -16,6 +16,13 @@ def to_merc(lon, lat):
     return x, y
 
 
+def to_merc_inv(x, y):
+    """Web Mercator metres -> lon/lat degrees."""
+    lon = np.degrees(np.asarray(x, dtype=np.float64) / R_EARTH)
+    lat = np.degrees(2 * np.arctan(np.exp(np.asarray(y, dtype=np.float64) / R_EARTH)) - np.pi / 2)
+    return float(lon), float(lat)
+
+
 def from_merc(x, y):
     lon = np.degrees(np.asarray(x) / R_EARTH)
     lat = np.degrees(2 * np.arctan(np.exp(np.asarray(y) / R_EARTH)) - np.pi / 2)

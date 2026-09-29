@@ -18,10 +18,20 @@ extern const double MAP_HOME_LAT, MAP_HOME_LON;
 // Region layer: point = REG_O + value * REG_UNIT. World layer: point = value * WLD_UNIT.
 extern const float REG_OX, REG_OY, REG_UNIT, WLD_UNIT;
 extern const uint8_t REG_PTS[], WLD_PTS[];
-extern const MapShape REG_FILL_FINE[], REG_FILL_COARSE[], REG_COAST_FINE[], REG_COAST_COARSE[],
-    REG_BORDER_FINE[], REG_BORDER_COARSE[], WLD_FILL[], WLD_COAST[], WLD_BORDER[];
-extern const uint32_t REG_FILL_FINE_N, REG_FILL_COARSE_N, REG_COAST_FINE_N, REG_COAST_COARSE_N,
-    REG_BORDER_FINE_N, REG_BORDER_COARSE_N, WLD_FILL_N, WLD_COAST_N, WLD_BORDER_N;
+// Region layer at three levels of detail (fine: zoom 9-11, mid: 7-8, coarse: further out).
+extern const MapShape REG_FILL_FINE[], REG_FILL_MID[], REG_FILL_COARSE[], REG_COAST_FINE[], REG_COAST_MID[],
+    REG_COAST_COARSE[], REG_BORDER_FINE[], REG_BORDER_MID[], REG_BORDER_COARSE[], WLD_FILL[], WLD_COAST[], WLD_BORDER[];
+// Grid index of the region layer: REG_GRID x REG_GRID cells over the int16 coordinate
+// range. For cell c, the shapes touching it are _IDX[_CELLS[c]] .. _IDX[_CELLS[c + 1] - 1].
+extern const int REG_GRID;
+extern const uint32_t REG_FILL_FINE_CELLS[], REG_FILL_MID_CELLS[], REG_FILL_COARSE_CELLS[], REG_COAST_FINE_CELLS[],
+    REG_COAST_MID_CELLS[], REG_COAST_COARSE_CELLS[], REG_BORDER_FINE_CELLS[], REG_BORDER_MID_CELLS[],
+    REG_BORDER_COARSE_CELLS[];
+extern const uint32_t REG_FILL_FINE_IDX[], REG_FILL_MID_IDX[], REG_FILL_COARSE_IDX[], REG_COAST_FINE_IDX[],
+    REG_COAST_MID_IDX[], REG_COAST_COARSE_IDX[], REG_BORDER_FINE_IDX[], REG_BORDER_MID_IDX[],
+    REG_BORDER_COARSE_IDX[];
+extern const uint32_t REG_FILL_FINE_N, REG_FILL_MID_N, REG_FILL_COARSE_N, REG_COAST_FINE_N, REG_COAST_MID_N,
+    REG_COAST_COARSE_N, REG_BORDER_FINE_N, REG_BORDER_MID_N, REG_BORDER_COARSE_N, WLD_FILL_N, WLD_COAST_N, WLD_BORDER_N;
 extern const MapPlace PLACES[];
 extern const uint32_t PLACES_N;
 extern const MapAirport AIRPORTS[];

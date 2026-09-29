@@ -1,5 +1,7 @@
 # Notta mihinä se lentää?
 
+> **`osm-map` branch:** a test of a more detailed map. The coastline and islands of the detailed area come from OpenStreetMap instead of Natural Earth, with three levels of detail and a grid index so only the shapes near the view are read. Firmware 2.6 MB → 4.2 MB. Not yet tested on the board.
+
 A desk display that shows the planes flying around you. It runs on a Waveshare ESP32-S3-Touch-LCD-7, which is a 7" touchscreen with an ESP32-S3 on the back, so there's nothing to wire up. Drag and zoom the map, tap a plane, and you get its route, altitude, speed, type and usually a photo of that exact aircraft.
 
 The name is Finnish, roughly "so, where's that one flying to?". The screen is in English by default and can be switched to Finnish.
@@ -50,7 +52,7 @@ There's a 3D-printable case in [`case/`](case/). It's closed on all sides, has t
 
 ## Data
 
-Positions come from [adsb.fi](https://adsb.fi), [airplanes.live](https://airplanes.live) and [adsb.lol](https://adsb.lol) (whichever answers), routes from [adsbdb](https://www.adsbdb.com), photos from [Planespotters.net](https://www.planespotters.net) and address search from [Nominatim](https://nominatim.org) (© OpenStreetMap contributors). Scheduled times need a free [AirLabs](https://airlabs.co) key. The map is built from [Natural Earth](https://www.naturalearthdata.com) and [OurAirports](https://ourairports.com), both public domain.
+Positions come from [adsb.fi](https://adsb.fi), [airplanes.live](https://airplanes.live) and [adsb.lol](https://adsb.lol) (whichever answers), routes from [adsbdb](https://www.adsbdb.com), photos from [Planespotters.net](https://www.planespotters.net) and address search from [Nominatim](https://nominatim.org) (© OpenStreetMap contributors). Scheduled times need a free [AirLabs](https://airlabs.co) key. The coastline and islands of the detailed map come from [OpenStreetMap](https://www.openstreetmap.org/copyright) (© OpenStreetMap contributors, ODbL; simplified land polygons packaged by [geo-maps](https://github.com/simonepri/geo-maps)). Lakes, borders and the world map are from [Natural Earth](https://www.naturalearthdata.com), airports from [OurAirports](https://ourairports.com), both public domain.
 
 The position services are free for personal, non-commercial use. The firmware keeps its request rate low, but check their terms if you do anything bigger with it.
 

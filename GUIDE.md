@@ -148,4 +148,4 @@ Without arguments it looks for both in `~/Documents/Arduino/libraries`.
 
 ## Credits
 
-Positions from adsb.fi, airplanes.live and adsb.lol; routes from adsbdb; address search from Nominatim (© OpenStreetMap contributors); timetables from AirLabs; photos from Planespotters.net and its photographers; map from Natural Earth; airports from OurAirports. JPEGDEC by Larry Bank, QRCode by Richard Moore, DejaVu Sans font. The board's pins and timings follow Waveshare's definition in ESP32_Display_Panel.
+Positions from adsb.fi, airplanes.live and adsb.lol; routes from adsbdb; address search from Nominatim (© OpenStreetMap contributors); timetables from AirLabs; photos from Planespotters.net and its photographers; coastline from OpenStreetMap (© OpenStreetMap contributors, ODbL), lakes and the world map from Natural Earth; airports from OurAirports. JPEGDEC by Larry Bank, QRCode by Richard Moore, DejaVu Sans font. The board's pins and timings follow Waveshare's definition in ESP32_Display_Panel.

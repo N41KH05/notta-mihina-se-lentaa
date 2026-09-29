@@ -219,11 +219,40 @@ static bool shapeVisible(const MapShape& sh, const Layer& L, float margin) {
   float y0 = L.oy + sh.y0 * L.unit, y1 = L.oy + sh.y1 * L.unit;
   return x1 >= vx0 && x0 <= vx1 && y1 >= vy0 && y0 <= vy1;
 }
-static void collectRings(const Layer& L, const MapShape* shapes, uint32_t n) {
+// A group of shapes, optionally with a grid index (region layer, see mapdata.h).
+struct ShapeSet { const MapShape* shapes; uint32_t n; const uint32_t* cells; const uint32_t* idx; };
+
+static inline int gridCell(float v) {                 // layer coordinate -> grid cell
+  int c = (int)floorf((v + 32768.0f) * REG_GRID / 65536.0f);
+  return c < 0 ? 0 : c >= REG_GRID ? REG_GRID - 1 : c;
+}
+// Calls f(shape) for each shape of the set near the view.
+template <typename F>
+static void forShapes(const Layer& L, const ShapeSet& set, float margin, F f) {
+  if (!set.cells) {
+    for (uint32_t i = 0; i < set.n; i++)
+      if (shapeVisible(set.shapes[i], L, margin)) f(set.shapes[i]);
+    return;
+  }
+  float m = margin * V_MPP;
+  int c0 = gridCell((V_CX - MAP_W / 2 * V_MPP - m - L.ox) / L.unit);
+  int c1 = gridCell((V_CX + MAP_W / 2 * V_MPP + m - L.ox) / L.unit);
+  int r0 = gridCell((V_CY - H / 2 * V_MPP - m - L.oy) / L.unit);
+  int r1 = gridCell((V_CY + H / 2 * V_MPP + m - L.oy) / L.unit);
+  for (int r = r0; r <= r1; r++)
+    for (int c = c0; c <= c1; c++)
+      for (uint32_t k = set.cells[r * REG_GRID + c]; k < set.cells[r * REG_GRID + c + 1]; k++) {
+        const MapShape& sh = set.shapes[set.idx[k]];
+        // A shape listed in several of these cells is handled in the first one only.
+        int sc = gridCell(sh.x0), sr = gridCell(sh.y0);
+        if ((sc > c0 ? sc : c0) != c || (sr > r0 ? sr : r0) != r) continue;
+        if (shapeVisible(sh, L, margin)) f(sh);
+      }
+}
+
+static void collectRings(const Layer& L, const ShapeSet& set) {
   const LayerView v(L);
-  for (uint32_t i = 0; i < n; i++) {
-    const MapShape& sh = shapes[i];
-    if (!shapeVisible(sh, L, 4)) continue;
+  forShapes(L, set, 4, [&](const MapShape& sh) {
     MapPoints pt(L.pts + sh.start);
     float px = pt.x * v.k + v.bx, py = v.by - pt.y * v.k;
     float fx = px, fy = py;
@@ -234,7 +263,7 @@ static void collectRings(const Layer& L, const MapShape* shapes, uint32_t n) {
       px = qx; py = qy;
     }
     addEdge(px, py, fx, fy);
-  }
+  });
 }
 static void fillLand(Adafruit_GFX& g) {
   static uint16_t end[H];                          // edges by starting row (counting sort)
@@ -276,13 +305,11 @@ static void fillLand(Adafruit_GFX& g) {
     if (cur < MAP_W) g.drawFastHLine(cur, row, MAP_W - cur, C_SEA);
   }
 }
-static void drawLines(Adafruit_GFX& g, const Layer& L, const MapShape* shapes, uint32_t n,
+static void drawLines(Adafruit_GFX& g, const Layer& L, const ShapeSet& set,
                       bool dashed, uint16_t color, uint8_t onlyFlag = 0) {
   const LayerView v(L);
-  for (uint32_t i = 0; i < n; i++) {
-    const MapShape& sh = shapes[i];
-    if (onlyFlag && !(sh.flags & onlyFlag)) continue;
-    if (!shapeVisible(sh, L, 2)) continue;
+  forShapes(L, set, 2, [&](const MapShape& sh) {
+    if (onlyFlag && !(sh.flags & onlyFlag)) return;
     MapPoints pt(L.pts + sh.start);
     float px = pt.x * v.k + v.bx, py = v.by - pt.y * v.k;
     const float firstX = px, firstY = py;
@@ -325,7 +352,7 @@ static void drawLines(Adafruit_GFX& g, const Layer& L, const MapShape* shapes, u
       }
       px = qx; py = qy;
     }
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -445,20 +472,23 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
   nEdges = 0;
   if (inRegion) {
     Layer L = {REG_PTS, REG_OX, REG_OY, REG_UNIT};
-    bool fine = V_MPP < 400;
-    collectRings(L, fine ? REG_FILL_FINE : REG_FILL_COARSE, fine ? REG_FILL_FINE_N : REG_FILL_COARSE_N);
+    int lod = V_MPP < 400 ? 0 : V_MPP < 1500 ? 1 : 2;    // fine, mid, coarse
+#define SET(name) {name, name##_N, name##_CELLS, name##_IDX}
+    const ShapeSet fill[] = {SET(REG_FILL_FINE), SET(REG_FILL_MID), SET(REG_FILL_COARSE)};
+    const ShapeSet coast[] = {SET(REG_COAST_FINE), SET(REG_COAST_MID), SET(REG_COAST_COARSE)};
+    const ShapeSet border[] = {SET(REG_BORDER_FINE), SET(REG_BORDER_MID), SET(REG_BORDER_COARSE)};
+#undef SET
+    collectRings(L, fill[lod]);
     fillLand(g);
-    drawLines(g, L, fine ? REG_COAST_FINE : REG_COAST_COARSE, fine ? REG_COAST_FINE_N : REG_COAST_COARSE_N,
-              false, C_COAST);
-    if (V_ZOOM >= 9) drawLines(g, L, REG_FILL_FINE, REG_FILL_FINE_N, false, C_COAST, 1);
-    drawLines(g, L, fine ? REG_BORDER_FINE : REG_BORDER_COARSE,
-              fine ? REG_BORDER_FINE_N : REG_BORDER_COARSE_N, true, C_BORDER);
+    drawLines(g, L, coast[lod], false, C_COAST);
+    if (V_ZOOM >= 9) drawLines(g, L, fill[0], false, C_COAST, 1);     // lake shores
+    drawLines(g, L, border[lod], true, C_BORDER);
   } else {
     Layer L = {WLD_PTS, 0, 0, WLD_UNIT};
-    collectRings(L, WLD_FILL, WLD_FILL_N);
+    collectRings(L, {WLD_FILL, WLD_FILL_N, nullptr, nullptr});
     fillLand(g);
-    drawLines(g, L, WLD_COAST, WLD_COAST_N, false, C_COAST);
-    drawLines(g, L, WLD_BORDER, WLD_BORDER_N, true, C_BORDER);
+    drawLines(g, L, {WLD_COAST, WLD_COAST_N, nullptr, nullptr}, false, C_COAST);
+    drawLines(g, L, {WLD_BORDER, WLD_BORDER_N, nullptr, nullptr}, true, C_BORDER);
   }
 
   // range rings around home
@@ -562,6 +592,8 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
   g.fillRect(x, y - 5, 2, 6, C_TEXT);
   g.fillRect(x + L - 1, y - 5, 2, 6, C_TEXT);
   text(g, x + L + 5, y - 9, t, B12, C_TEXT);
+  // The detailed coastline is OpenStreetMap data (ODbL): credit it while it is shown.
+  if (inRegion) haloText(g, x + L + 20 + textW(B12, t), y - 8, "(c) OpenStreetMap", R11, C_TEXT2, C_WHITE);
 }
 
 // ---------------------------------------------------------------------------
