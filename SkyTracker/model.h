@@ -160,18 +160,22 @@ struct AppState {
       const Plane& p = planes[i];
       if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) out[n++] = i;
     }
+    static float dist[MAX_PLANES];          // distance to the centre, same order as out
+    for (int i = 0; i < n; i++) {
+      const Plane& p = planes[out[i]];
+      dist[i] = (p.x - cx) * (p.x - cx) + (p.y - cy) * (p.y - cy);
+    }
     for (int i = 1; i < n; i++) {           // insertion sort by distance to centre
       int v = out[i];
-      float dv = (planes[v].x - cx) * (planes[v].x - cx) + (planes[v].y - cy) * (planes[v].y - cy);
+      float dv = dist[i];
       int j = i - 1;
-      while (j >= 0) {
-        const Plane& q = planes[out[j]];
-        float dq = (q.x - cx) * (q.x - cx) + (q.y - cy) * (q.y - cy);
-        if (dq <= dv) break;
+      while (j >= 0 && dist[j] > dv) {
         out[j + 1] = out[j];
+        dist[j + 1] = dist[j];
         j--;
       }
       out[j + 1] = v;
+      dist[j + 1] = dv;
     }
     return n;
   }

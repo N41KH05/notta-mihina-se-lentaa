@@ -311,21 +311,42 @@ def c_str(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def encode_shape(q):
+    """One shape's points: the first as two int16, then each as the step from the
+    previous one: two int8, or 0x80 followed by two int16 for a long step."""
+    out = bytearray(np.asarray(q[0], "<i2").tobytes())
+    for dx, dy in (q[1:].astype(np.int64) - q[:-1].astype(np.int64)):
+        if -127 <= dx <= 127 and -128 <= dy <= 127:
+            out += bytes((dx & 0xFF, dy & 0xFF))
+        else:                           # stored modulo 2^16 (the reader wraps the same way)
+            wrap = lambda v: (int(v) + 32768) % 65536 - 32768
+            out += b"\x80" + np.array([wrap(dx), wrap(dy)], "<i2").tobytes()
+    return out
+
+
 def emit_layer(out, prefix, layer, groups):
+    """Points as a byte stream (see encode_shape); each shape records where it starts."""
+    data = bytearray()
+    shapes = {}
     pts = np.concatenate(layer.pts) if layer.pts else np.zeros((0, 2), np.int16)
-    out.append(f"const int16_t {prefix}_PTS[] = {{")
-    flat = pts.ravel()
-    for i in range(0, len(flat), 32):
-        out.append(",".join(str(int(v)) for v in flat[i:i + 32]) + ",")
+    for g in groups:
+        rows = []
+        for start, count, *rest in layer.groups.get(g, []):
+            rows.append((len(data), count, *rest))
+            data += encode_shape(pts[start:start + count])
+        shapes[g] = rows
+    out.append(f"const uint8_t {prefix}_PTS[] = {{")
+    for i in range(0, len(data), 40):
+        out.append(",".join(str(v) for v in data[i:i + 40]) + ",")
     out.append("0};")
     for g in groups:
-        shapes = layer.groups.get(g, [])
+        rows = shapes.get(g, [])
         out.append(f"const MapShape {prefix}_{g.upper()}[] = {{")
-        for s in shapes:
-            out.append("{%d,%d,%d,%d,%d,%d,%d}," % tuple(int(v) for v in s))
+        for r in rows:
+            out.append("{%d,%d,%d,%d,%d,%d,%d}," % tuple(int(v) for v in r))
         out.append("{0,0,0,0,0,0,0}};")
-        out.append(f"const uint32_t {prefix}_{g.upper()}_N = {len(shapes)};")
-    return len(flat) * 2
+        out.append(f"const uint32_t {prefix}_{g.upper()}_N = {len(rows)};")
+    return len(data)
 
 
 def write(reg, wld, places, airports, runways, labels, lat, lon):

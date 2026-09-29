@@ -2,7 +2,7 @@
 #include "render.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include "fonts.h"
+#include "text.h"
 #include "mapdata.h"
 #include "utf8.h"
 #include "photo.h"
@@ -23,51 +23,8 @@ static const uint16_t C_COUNTRY = RGB(128, 112, 140), C_WATER = RGB(58, 96, 138)
 static const int W = SCREEN_W, H = SCREEN_H, PANEL_X = MAP_W;
 
 // ---------------------------------------------------------------------------
-//  Fonts and text
+//  Text (text.cpp)
 // ---------------------------------------------------------------------------
-struct Fnt { const GFXfont* f; int asc; int size; };
-static const Fnt R11 = {&F_R11, F_R11_ASC, 11}, R12 = {&F_R12, F_R12_ASC, 12},
-                 R13 = {&F_R13, F_R13_ASC, 13}, R14 = {&F_R14, F_R14_ASC, 14},
-                 C12 = {&F_C12, F_C12_ASC, 12}, B12 = {&F_B12, F_B12_ASC, 12},
-                 B13 = {&F_B13, F_B13_ASC, 13}, B14 = {&F_B14, F_B14_ASC, 14},
-                 B15 = {&F_B15, F_B15_ASC, 15}, B16 = {&F_B16, F_B16_ASC, 16},
-                 B18 = {&F_B18, F_B18_ASC, 18}, B22 = {&F_B22, F_B22_ASC, 22},
-                 B26 = {&F_B26, F_B26_ASC, 26}, B30 = {&F_B30, F_B30_ASC, 30},
-                 B34 = {&F_B34, F_B34_ASC, 34};
-
-static int textW(const Fnt& fn, const char* in) {
-  char buf[160];
-  utf8ToFont(in, buf, sizeof buf);
-  const char* s = buf;
-  int w = 0;
-  for (; *s; s++) {
-    uint8_t c = (uint8_t)*s;
-    if (c < fn.f->first || c > fn.f->last) continue;
-    w += fn.f->glyph[c - fn.f->first].xAdvance;
-  }
-  return w;
-}
-static void text(Adafruit_GFX& g, int x, int y, const char* in, const Fnt& fn, uint16_t color) {
-  char s[160];
-  utf8ToFont(in, s, sizeof s);
-  g.setFont(fn.f);
-  g.setTextColor(color);
-  g.setCursor(x, y + fn.asc);
-  g.print(s);
-}
-static void textR(Adafruit_GFX& g, int xr, int y, const char* s, const Fnt& fn, uint16_t c) {
-  text(g, xr - textW(fn, s), y, s, fn, c);
-}
-static void textC(Adafruit_GFX& g, int xm, int y, const char* s, const Fnt& fn, uint16_t c) {
-  text(g, xm - textW(fn, s) / 2, y, s, fn, c);
-}
-static void haloText(Adafruit_GFX& g, int x, int y, const char* s, const Fnt& fn, uint16_t c,
-                     uint16_t halo) {
-  static const int8_t off[][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1},
-                                  {-2, 0}, {2, 0}, {0, -2}, {0, 2}};
-  for (auto& o : off) text(g, x + o[0], y + o[1], s, fn, halo);
-  text(g, x, y, s, fn, c);
-}
 static void fit(char* s, const Fnt& fn, int maxW) {
   utf8ToFont(s, s, strlen(s) + 1);      // one byte per character from here on
   if (textW(fn, s) <= maxW) return;
@@ -202,6 +159,14 @@ static uint16_t altColor(const Plane& p) {
   return RGB(stops[6].r, stops[6].g, stops[6].b);
 }
 
+// Same result as lroundf (halves away from zero), but much cheaper than the C
+// library's version on the ESP32. Only for values well inside the int range.
+static inline int rnd(float v) {
+  int i = (int)v;                      // towards zero
+  float f = v - (float)i;              // exact
+  return f >= 0.5f ? i + 1 : f <= -0.5f ? i - 1 : i;
+}
+
 // ---------------------------------------------------------------------------
 //  View transform
 // ---------------------------------------------------------------------------
@@ -216,7 +181,11 @@ static inline float sy(float y) { return (V_CY - y) / V_MPP + H / 2.0f; }
 // ---------------------------------------------------------------------------
 //  Land: one even-odd scanline pass over every visible ring
 // ---------------------------------------------------------------------------
-struct Edge { float yTop, yBot, x, dx; };
+// Each row is sampled at its centre (row + 0.5). An edge only matters for the rows
+// whose centre it spans, so edges that don't cross any row centre on screen (most of
+// them when zoomed out) are dropped straight away, and the rest are bucketed by their
+// first row instead of being sorted.
+struct Edge { float yTop, yBot, x, dx; int16_t row0; };
 static Edge* edges = nullptr;
 static int nEdges = 0;
 static const int MAX_EDGES = 60000, MAX_ACTIVE = 4096;
@@ -225,10 +194,22 @@ static void addEdge(float x0, float y0, float x1, float y1) {
   if (y0 == y1 || nEdges >= MAX_EDGES) return;
   if (y0 > y1) { float t = x0; x0 = x1; x1 = t; t = y0; y0 = y1; y1 = t; }
   if (y1 < 0 || y0 >= H) return;
+  // Rows r with y0 <= r + 0.5 < y1.
+  int r0 = (int)ceilf(y0 - 0.5f), r1 = (int)ceilf(y1 - 0.5f) - 1;
+  if (r0 < 0) r0 = 0;
+  if (r1 > H - 1) r1 = H - 1;
+  if (r0 > r1) return;
   Edge& e = edges[nEdges++];
-  e.yTop = y0; e.yBot = y1; e.dx = (x1 - x0) / (y1 - y0); e.x = x0;
+  e.yTop = y0; e.yBot = y1; e.dx = (x1 - x0) / (y1 - y0); e.x = x0; e.row0 = r0;
 }
-struct Layer { const int16_t* pts; float ox, oy, unit; };
+struct Layer { const uint8_t* pts; float ox, oy, unit; };
+// Screen position of layer point (x, y) is (x * k + bx, by - y * k): one multiply and
+// add per coordinate instead of a division.
+struct LayerView {
+  float k, bx, by;
+  explicit LayerView(const Layer& L)
+      : k(L.unit / V_MPP), bx((L.ox - V_CX) / V_MPP + MAP_W / 2.0f), by((V_CY - L.oy) / V_MPP + H / 2.0f) {}
+};
 
 static bool shapeVisible(const MapShape& sh, const Layer& L, float margin) {
   float m = margin * V_MPP;
@@ -239,35 +220,35 @@ static bool shapeVisible(const MapShape& sh, const Layer& L, float margin) {
   return x1 >= vx0 && x0 <= vx1 && y1 >= vy0 && y0 <= vy1;
 }
 static void collectRings(const Layer& L, const MapShape* shapes, uint32_t n) {
+  const LayerView v(L);
   for (uint32_t i = 0; i < n; i++) {
     const MapShape& sh = shapes[i];
     if (!shapeVisible(sh, L, 4)) continue;
-    const int16_t* p = L.pts + sh.start * 2;
-    float px = sx(L.ox + p[0] * L.unit), py = sy(L.oy + p[1] * L.unit);
+    MapPoints pt(L.pts + sh.start);
+    float px = pt.x * v.k + v.bx, py = v.by - pt.y * v.k;
     float fx = px, fy = py;
     for (uint32_t k = 1; k < sh.count; k++) {
-      float qx = sx(L.ox + p[k * 2] * L.unit), qy = sy(L.oy + p[k * 2 + 1] * L.unit);
+      pt.next();
+      float qx = pt.x * v.k + v.bx, qy = v.by - pt.y * v.k;
       addEdge(px, py, qx, qy);
       px = qx; py = qy;
     }
     addEdge(px, py, fx, fy);
   }
 }
-static int cmpEdge(const void* a, const void* b) {
-  float d = ((const Edge*)a)->yTop - ((const Edge*)b)->yTop;
-  return d < 0 ? -1 : d > 0 ? 1 : 0;
-}
 static void fillLand(Adafruit_GFX& g) {
-  qsort(edges, nEdges, sizeof(Edge), cmpEdge);
-  static int active[MAX_ACTIVE];
+  static uint16_t end[H];                          // edges by starting row (counting sort)
+  static uint16_t* order = (uint16_t*)renderAlloc(sizeof(uint16_t) * MAX_EDGES);
+  static uint16_t active[MAX_ACTIVE];
   static float xs[MAX_ACTIVE];
-  int nAct = 0, next = 0;
+  memset(end, 0, sizeof end);
+  for (int i = 0; i < nEdges; i++) end[edges[i].row0]++;
+  for (int r = 0, sum = 0; r < H; r++) { int c = end[r]; end[r] = sum; sum += c; }   // starts
+  for (int i = 0; i < nEdges; i++) order[end[edges[i].row0]++] = i;               // now ends
+  int nAct = 0;
   for (int row = 0; row < H; row++) {
     float yc = row + 0.5f;
-    while (next < nEdges && edges[next].yTop <= yc) {
-      if (edges[next].yBot > yc && nAct < MAX_ACTIVE) active[nAct++] = next;
-      next++;
-    }
+    for (int k = row ? end[row - 1] : 0; k < end[row] && nAct < MAX_ACTIVE; k++) active[nAct++] = order[k];
     int nx = 0;
     for (int i = 0; i < nAct;) {
       Edge& e = edges[active[i]];
@@ -281,29 +262,52 @@ static void fillLand(Adafruit_GFX& g) {
       while (j >= 0 && xs[j] > v) { xs[j + 1] = xs[j]; j--; }
       xs[j + 1] = v;
     }
+    // Sea and land in one pass: each pixel of the row is written once.
+    int cur = 0;
     for (int i = 0; i + 1 < nx; i += 2) {
       int a = (int)ceilf(xs[i] - 0.5f), b = (int)floorf(xs[i + 1] - 0.5f);
       if (a < 0) a = 0;
       if (b > MAP_W - 1) b = MAP_W - 1;
-      if (b >= a) g.drawFastHLine(a, row, b - a + 1, C_LAND);
+      if (b < a) continue;
+      if (a > cur) g.drawFastHLine(cur, row, a - cur, C_SEA);
+      g.drawFastHLine(a, row, b - a + 1, C_LAND);
+      if (b + 1 > cur) cur = b + 1;
     }
+    if (cur < MAP_W) g.drawFastHLine(cur, row, MAP_W - cur, C_SEA);
   }
 }
 static void drawLines(Adafruit_GFX& g, const Layer& L, const MapShape* shapes, uint32_t n,
                       bool dashed, uint16_t color, uint8_t onlyFlag = 0) {
+  const LayerView v(L);
   for (uint32_t i = 0; i < n; i++) {
     const MapShape& sh = shapes[i];
     if (onlyFlag && !(sh.flags & onlyFlag)) continue;
     if (!shapeVisible(sh, L, 2)) continue;
-    const int16_t* p = L.pts + sh.start * 2;
-    float px = sx(L.ox + p[0] * L.unit), py = sy(L.oy + p[1] * L.unit);
+    MapPoints pt(L.pts + sh.start);
+    float px = pt.x * v.k + v.bx, py = v.by - pt.y * v.k;
+    const float firstX = px, firstY = py;
     float run = 0;
+    // Solid lines: a segment whose ends land on the same pixel only draws that pixel,
+    // which the previous segment has already drawn if it was drawn (the usual case
+    // when zoomed out, where many points fall on one pixel).
+    int ipx = rnd(px), ipy = rnd(py);
+    bool prevDrawn = false;
     for (uint32_t k = 1; k < sh.count + (onlyFlag ? 1 : 0); k++) {
-      uint32_t kk = k % sh.count;
-      float qx = sx(L.ox + p[kk * 2] * L.unit), qy = sy(L.oy + p[kk * 2 + 1] * L.unit);
+      float qx = firstX, qy = firstY;          // (closing a lake outline)
+      if (k < sh.count) {
+        pt.next();
+        qx = pt.x * v.k + v.bx;
+        qy = v.by - pt.y * v.k;
+      }
       bool on = !((px < -50 && qx < -50) || (px > MAP_W + 50 && qx > MAP_W + 50) ||
                   (py < -50 && qy < -50) || (py > H + 50 && qy > H + 50));
-      if (on && !dashed) g.drawLine(lroundf(px), lroundf(py), lroundf(qx), lroundf(qy), color);
+      if (!dashed) {
+        int iqx = rnd(qx), iqy = rnd(qy);
+        if (on && (iqx != ipx || iqy != ipy)) g.drawLine(ipx, ipy, iqx, iqy, color);
+        else if (on && !prevDrawn) g.drawPixel(ipx, ipy, color);
+        prevDrawn = on;
+        ipx = iqx; ipy = iqy;
+      }
       if (on && dashed) {
         float len = hypotf(qx - px, qy - py);
         for (float t = 0; t < len;) {
@@ -312,8 +316,8 @@ static void drawLines(Adafruit_GFX& g, const Layer& L, const MapShape* shapes, u
           if (step > len - t) step = len - t;
           if (phase < 7) {
             float a = t / len, b = (t + step) / len;
-            g.drawLine(lroundf(px + (qx - px) * a), lroundf(py + (qy - py) * a),
-                       lroundf(px + (qx - px) * b), lroundf(py + (qy - py) * b), color);
+            g.drawLine(rnd(px + (qx - px) * a), rnd(py + (qy - py) * a),
+                       rnd(px + (qx - px) * b), rnd(py + (qy - py) * b), color);
           }
           t += step < 0.01f ? 0.01f : step;
         }
@@ -350,7 +354,7 @@ static bool mapLabel(Adafruit_GFX& g, float x, float y, const char* s, const Fnt
   for (auto& c : cand) {
     if (!isFree(c[0], c[1], c[0] + w, c[1] + h)) continue;
     take(c[0], c[1], c[0] + w, c[1] + h);
-    haloText(g, lroundf(c[0]) + 2, lroundf(c[1]) + 1, s, f, color, C_LAND);
+    haloText(g, rnd(c[0]) + 2, rnd(c[1]) + 1, s, f, color, C_LAND);
     return true;
   }
   return false;
@@ -364,7 +368,7 @@ static bool areaLabel(Adafruit_GFX& g, float x, float y, const char* s, const Fn
     float x0 = x - w / 2.0f + d[0], y0 = y - h / 2.0f + d[1];
     if (!isFree(x0, y0, x0 + w, y0 + h)) continue;
     take(x0, y0, x0 + w, y0 + h);
-    haloText(g, lroundf(x0) + 2, lroundf(y0) + 1, s, f, color, halo);
+    haloText(g, rnd(x0) + 2, rnd(y0) + 1, s, f, color, halo);
     return true;
   }
   return false;
@@ -382,7 +386,7 @@ static bool planeTag(Adafruit_GFX& g, float x, float y, const char* l1, const Fn
   for (auto& c : cand) {
     if (!force && !isFree(c[0], c[1], c[0] + w, c[1] + h)) continue;
     take(c[0], c[1], c[0] + w, c[1] + h);
-    int ix = lroundf(c[0]), iy = lroundf(c[1]);
+    int ix = rnd(c[0]), iy = rnd(c[1]);
     g.fillRoundRect(ix, iy, w, h, 4, bg);
     if (edge != bg) g.drawRoundRect(ix, iy, w, h, 4, edge);
     text(g, ix + 4, iy + 2, l1, f1, fg);
@@ -407,8 +411,8 @@ static void planeShape(Adafruit_GFX& g, float x, float y, float heading, float s
     int p[6];
     for (int i = 0; i < 3; i++) {
       float px = t[i * 2] * size, py = t[i * 2 + 1] * size;
-      p[i * 2] = lroundf(x + px * cs - py * sn);
-      p[i * 2 + 1] = lroundf(y + px * sn + py * cs);
+      p[i * 2] = rnd(x + px * cs - py * sn);
+      p[i * 2 + 1] = rnd(y + px * sn + py * cs);
     }
     g.fillTriangle(p[0], p[1], p[2], p[3], p[4], p[5], c);
   }
@@ -432,7 +436,7 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
   homeY = mercY(cfg.homeLat);
   nTaken = 0;
 
-  g.fillRect(0, 0, MAP_W, H, C_SEA);
+  // (the sea is filled together with the land, row by row, in fillLand)
   take(MAP_W - 66, H - 3 * 54 - 10, MAP_W, H);   // keep labels clear of the buttons
   take(0, H - 104, 150, H);                       // and of the settings button and scale bar
   float hw = MAP_W / 2 * V_MPP, hh = H / 2 * V_MPP, span = 32000 * REG_UNIT;
@@ -467,13 +471,13 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
     int step = r < 300 ? 3 : 1;
     for (int i = 0; i < 360; i += step) {
       float a = i * 0.0174533f;
-      int x = lroundf(hx + r * sinf(a)), y = lroundf(hy - r * cosf(a));
+      int x = rnd(hx + r * sinf(a)), y = rnd(hy - r * cosf(a));
       if (x >= 0 && x < MAP_W - 1 && y >= 0 && y < H) g.fillRect(x, y, 2, 2, C_RING);
     }
     if (hx > 0 && hx < MAP_W && hy - r > 10 && hy - r < H) {
       char t[16];
       snprintf(t, sizeof t, "%d %s", n, units.distKm ? "km" : "nm");
-      haloText(g, lroundf(hx - textW(R11, t) / 2.0f), lroundf(hy - r - 7), t, R11, C_RING, C_LAND);
+      haloText(g, rnd(hx - textW(R11, t) / 2.0f), rnd(hy - r - 7), t, R11, C_RING, C_LAND);
     }
   }
 
@@ -495,7 +499,7 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
     if (!airportShown(ap)) continue;
     float x = sx(ap.x), y = sy(ap.y);
     if (x < 0 || x >= MAP_W || y < 0 || y >= H) continue;
-    int ix = lroundf(x), iy = lroundf(y);
+    int ix = rnd(x), iy = rnd(y);
     g.fillCircle(ix, iy, 5, C_WHITE);
     ring(g, ix, iy, 4, 2, C_RUNWAY);
     g.drawFastHLine(ix - 3, iy, 7, C_RUNWAY);
@@ -504,7 +508,7 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
 
   // home
   if (hx > -10 && hx < MAP_W + 10 && hy > -10 && hy < H + 10) {
-    int ix = lroundf(hx), iy = lroundf(hy);
+    int ix = rnd(hx), iy = rnd(hy);
     g.fillCircle(ix, iy, 9, C_WHITE);
     ring(g, ix, iy, 8, 2, C_ACCENT);
     g.fillCircle(ix, iy, 3, C_ACCENT);
@@ -540,7 +544,7 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
     float x = sx(p.x), y = sy(p.y);
     if (x < 0 || x >= MAP_W || y < 0 || y >= H) continue;
     if (mapLabel(g, x, y, mapName(p.name, language == LANG_EN), p.big ? B14 : R12, 6, C_PLACE))
-      g.fillRect(lroundf(x) - 2, lroundf(y) - 2, 5, 5, C_PLACE);
+      g.fillRect(rnd(x) - 2, rnd(y) - 2, 5, 5, C_PLACE);
   }
 
   // scale bar
@@ -550,7 +554,7 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
   int best = 1;
   for (int n : nice)
     if (n * unitM / real <= 110) best = n;
-  int L = lroundf(best * unitM / real), x = 12, y = H - 14;
+  int L = rnd(best * unitM / real), x = 12, y = H - 14;
   char t[16];
   snprintf(t, sizeof t, "%d %s", best, units.distKm ? "km" : "nm");
   g.fillRoundRect(x - 6, y - 18, L + 16 + textW(B12, t), 26, 4, C_WHITE);
@@ -585,7 +589,7 @@ static void mapButton(Adafruit_GFX& g, int y, int kind, int bx = BTN_X) {
   if (kind == 3) {                                                  // gear
     for (int i = 0; i < 8; i++) {
       float a = i * 0.785398f;
-      g.fillCircle(lroundf(cx + 12 * sinf(a)), lroundf(cy - 12 * cosf(a)), 4, C_NAVY);
+      g.fillCircle(rnd(cx + 12 * sinf(a)), rnd(cy - 12 * cosf(a)), 4, C_NAVY);
     }
     g.fillCircle(cx, cy, 12, C_NAVY);
     g.fillCircle(cx, cy, 5, C_WHITE);
@@ -748,7 +752,7 @@ static void drawPlanes(Adafruit_GFX& g, AppState& s, int n) {
       const float* t = p.trailAt(i);
       float tx = sx(t[0]), ty = sy(t[1]);
       if (sel && i) { g.drawLine(lx, ly, tx, ty, c); g.drawLine(lx + 1, ly, tx + 1, ty, c); }
-      else g.fillRect(lroundf(tx) - 1, lroundf(ty) - 1, 2, 2, c);
+      else g.fillRect(rnd(tx) - 1, rnd(ty) - 1, 2, 2, c);
       lx = tx; ly = ty;
     }
     if (sel && p.trailN) g.drawLine(lx, ly, sx(p.x), sy(p.y), c);
@@ -760,8 +764,8 @@ static void drawPlanes(Adafruit_GFX& g, AppState& s, int n) {
       if (sel != (pass == 1)) continue;
       float x = sx(p.x), y = sy(p.y), sz = size + (sel ? 3 : 0), hd = p.hasTrack ? p.track : 0;
       if (sel) {
-        g.fillCircle(lroundf(x), lroundf(y), lroundf(sz + 9), RGB(255, 236, 242));
-        ring(g, lroundf(x), lroundf(y), lroundf(sz + 8), 2, C_ACCENT);
+        g.fillCircle(rnd(x), rnd(y), rnd(sz + 9), RGB(255, 236, 242));
+        ring(g, rnd(x), rnd(y), rnd(sz + 8), 2, C_ACCENT);
       }
       planeShape(g, x, y, hd, sz + 2, p.emergency() ? C_EMERG : C_OUTLINE);
       planeShape(g, x, y, hd, sz, p.emergency() ? RGB(255, 200, 200) : altColor(p));
@@ -799,7 +803,7 @@ static void drawCoverage(Adafruit_GFX& g, AppState& s) {
   if (covered) return;
   for (int i = 0; i < 360; i += 2) {
     float a = i * 0.0174533f;
-    g.fillRect(lroundf(cx + r * sinf(a)) - 1, lroundf(cy - r * cosf(a)) - 1, 3, 3, C_NAVY);
+    g.fillRect(rnd(cx + r * sinf(a)) - 1, rnd(cy - r * cosf(a)) - 1, 3, 3, C_NAVY);
   }
   const char* t = units.distKm ? TR("Koneet 460 km:n säteellä keskipisteestä", "Aircraft within 460 km of the centre")
                                : TR("Koneet 250 nm:n säteellä keskipisteestä", "Aircraft within 250 nm of the centre");
@@ -988,7 +992,7 @@ static void panelDetails(Adafruit_GFX& g, AppState& s, const Plane& p, const str
   fmtAlt(t, sizeof t, p, false);  row(g, y, TR("KORKEUS", "ALTITUDE"), t, altColor(p)); y += 23;
   fmtVrate(t, sizeof t, p);       row(g, y, TR("NOUSU/LASKU", "VERTICAL RATE"), t);              y += 23;
   fmtSpeed(t, sizeof t, p);       row(g, y, TR("NOPEUS", "GROUND SPEED"), t);                 y += 23;
-  if (p.hasTrack) snprintf(t, sizeof t, "%03ld\x82 %s", lroundf(p.track) % 360, compass(p.track));
+  if (p.hasTrack) snprintf(t, sizeof t, "%03d\x82 %s", rnd(p.track) % 360, compass(p.track));
   else snprintf(t, sizeof t, "--");
   row(g, y, TR("SUUNTA", "TRACK"), t);        y += 23;
   char d[24];

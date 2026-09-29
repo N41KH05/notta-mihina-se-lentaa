@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-#include "fonts.h"
+#include "text.h"
 #include "utf8.h"
 #include "render.h"
 
@@ -17,34 +17,7 @@ const uint16_t C_BG = RGB(238, 241, 246), C_CARD = 0xFFFF, C_NAVY = RGB(22, 36, 
                C_WHITE = 0xFFFF, C_SOFT = RGB(200, 210, 230);
 const int W = SCREEN_W, H = SCREEN_H;
 
-// ---- text ---------------------------------------------------------------------
-struct Fnt { const GFXfont* f; int asc; int size; };
-const Fnt R12 = {&F_R12, F_R12_ASC, 12}, R14 = {&F_R14, F_R14_ASC, 14}, B14 = {&F_B14, F_B14_ASC, 14},
-          B16 = {&F_B16, F_B16_ASC, 16}, B18 = {&F_B18, F_B18_ASC, 18}, B22 = {&F_B22, F_B22_ASC, 22},
-          B26 = {&F_B26, F_B26_ASC, 26};
-
-int textW(const Fnt& fn, const char* in) {
-  char buf[160];
-  utf8ToFont(in, buf, sizeof buf);
-  const char* s = buf;
-  int w = 0;
-  for (; *s; s++) {
-    uint8_t c = (uint8_t)*s;
-    if (c >= fn.f->first && c <= fn.f->last) w += fn.f->glyph[c - fn.f->first].xAdvance;
-  }
-  return w;
-}
-void text(Adafruit_GFX& g, int x, int y, const char* in, const Fnt& fn, uint16_t c) {
-  char s[160];
-  utf8ToFont(in, s, sizeof s);
-  g.setFont(fn.f);
-  g.setTextColor(c);
-  g.setCursor(x, y + fn.asc);
-  g.print(s);
-}
-void textC(Adafruit_GFX& g, int xm, int y, const char* s, const Fnt& fn, uint16_t c) {
-  text(g, xm - textW(fn, s) / 2, y, s, fn, c);
-}
+// ---- text (text.cpp) -------------------------------------------------------------
 void fitCopy(char* dst, size_t n, const char* src, const Fnt& fn, int maxW) {
   utf8ToFont(src, dst, n);                 // one byte per character from here on
   int len = strlen(dst);

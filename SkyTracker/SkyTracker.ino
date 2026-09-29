@@ -26,19 +26,13 @@
 #include "photo.h"
 #include "web.h"
 #include "places.h"
-
-// A GFX canvas that draws straight into a frame buffer we own.
-class FrameCanvas : public GFXcanvas16 {
- public:
-  FrameCanvas() : GFXcanvas16(SCREEN_W, SCREEN_H, false) {}
-  void use(uint16_t* buf) { buffer = buf; }
-};
+#include "canvas.h"
 
 AppState state;
 SemaphoreHandle_t lock;
 QueueHandle_t events;
 TaskHandle_t fetchTask;
-FrameCanvas canvas, baseCanvas;
+Canvas canvas(SCREEN_W, SCREEN_H, false), baseCanvas(SCREEN_W, SCREEN_H, false);   // draw into our buffers
 uint16_t* baseBuf;                 // cached map background
 
 void* renderAlloc(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM); }
@@ -700,11 +694,6 @@ void loop() {
   }
   xSemaphoreGive(lock);
 
-  static uint32_t lastReconnect = 0;
-  if (WiFi.status() != WL_CONNECTED && !state.demo && savedSsid[0] && millis() - lastReconnect > 30000) {
-    lastReconnect = millis();
-    WiFi.reconnect();
-  }
   if (got || millis() - lastFrame >= FRAME_MS) {
     lastFrame = millis();
     drawFrame();

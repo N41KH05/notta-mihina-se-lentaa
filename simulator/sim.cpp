@@ -12,12 +12,13 @@
 #include "sim_photo.h"
 #include "places.h"
 #include "traffic.h"
+#include "canvas.h"
 #include <stdio.h>
 
 void* renderAlloc(size_t n) { return malloc(n); }
 
 static AppState s;
-static GFXcanvas16* frame;
+static Canvas* frame;
 static Gestures gest;
 static uint32_t nowMs, lastPoll;
 static bool live = false;                  // live data from the page (else demo traffic)
@@ -142,7 +143,7 @@ __attribute__((export_name("sim_init"))) void sim_init(uint32_t ms) {
   livePix = (uint16_t*)calloc(PHOTO_W * PHOTO_H, 2);
   appGoHome(s);
   s.apiOk = true;
-  frame = new GFXcanvas16(SCREEN_W, SCREEN_H);
+  frame = new Canvas(SCREEN_W, SCREEN_H);
   uiInit(&hooks);
   nowMs = lastPoll = ms;
   demoInit(s, ms);
@@ -199,7 +200,19 @@ __attribute__((export_name("sim_frame"))) uint16_t* sim_frame(uint32_t ms, int h
   static struct tm upd = {};
   if (ms == lastPoll || freshUpdate) { upd = now; freshUpdate = false; }
   if (!s.updatedEpoch) { s.updatedEpoch = 1; upd = now; }
-  renderBase(*frame, s.cx, s.cy, s.zoom);
+  // Like the board: the map background is drawn only when something it shows changed.
+  static Canvas* base = new Canvas(SCREEN_W, SCREEN_H);
+  static struct Key { float cx, cy; int zoom; uint8_t lang; Units u; double hlat, hlon; char hname[24]; } last;
+  Key k;
+  memset(&k, 0, sizeof k);
+  k.cx = s.cx; k.cy = s.cy; k.zoom = s.zoom; k.lang = language; k.u = units;
+  k.hlat = cfg.homeLat; k.hlon = cfg.homeLon;
+  snprintf(k.hname, sizeof k.hname, "%s", cfg.homeName);
+  if (memcmp(&k, &last, sizeof k)) {
+    renderBase(*base, s.cx, s.cy, s.zoom);
+    memcpy(&last, &k, sizeof k);
+  }
+  memcpy(frame->getBuffer(), base->getBuffer(), SCREEN_W * SCREEN_H * 2);
   renderOverlay(*frame, s, ms, &now, &upd);
   return frame->getBuffer();
 }

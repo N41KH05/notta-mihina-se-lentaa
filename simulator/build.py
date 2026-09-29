@@ -18,7 +18,8 @@ subprocess.check_call([sys.executable, "-m", "ziglang", "c++", "-target", "wasm3
     "-DARDUINOJSON_ENABLE_ARDUINO_STRING=0", "-DARDUINOJSON_ENABLE_ARDUINO_STREAM=0",
     "-DARDUINOJSON_ENABLE_ARDUINO_PRINT=0", "-DARDUINOJSON_ENABLE_PROGMEM=0",
     "-I" + os.path.join(HERE, "shim"), "-I" + GFX, "-I" + JSON, "-I" + SK, "-mexec-model=reactor", "-Wl,--no-entry",
-    os.path.join(HERE, "sim.cpp"), *[os.path.join(SK, f) for f in ("render.cpp", "demo.cpp", "app.cpp", "ui.cpp", "places.cpp", "traffic.cpp", "mapdata.cpp")],
+    "-g0", "-Wl,--strip-all",                    # no debug info: a much smaller page
+    os.path.join(HERE, "sim.cpp"), *[os.path.join(SK, f) for f in ("render.cpp", "text.cpp", "demo.cpp", "app.cpp", "ui.cpp", "places.cpp", "traffic.cpp", "mapdata.cpp")],
     os.path.join(GFX, "Adafruit_GFX.cpp"), qr_obj, "-o", wasm])
 b64 = base64.b64encode(gzip.compress(open(wasm, "rb").read(), 9)).decode()
 page = open(os.path.join(HERE, "page.html"), encoding="utf-8").read().replace("__WASM__", b64)

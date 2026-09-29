@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 struct MapShape {          // one ring (filled area) or polyline
-  uint32_t start;          // index of first point (x,y pairs) in the layer's _PTS array
+  uint32_t start;          // where its points start in the layer's _PTS bytes (see MapPoints)
   uint32_t count;          // number of points
   int16_t x0, y0, x1, y1;  // bounding box in layer units
   uint8_t flags;           // fills: 1 = lake (outline it when zoomed in)
@@ -17,7 +17,7 @@ struct MapLabel { int32_t x, y; uint8_t kind, minz10, maxz10; uint32_t name; };
 extern const double MAP_HOME_LAT, MAP_HOME_LON;
 // Region layer: point = REG_O + value * REG_UNIT. World layer: point = value * WLD_UNIT.
 extern const float REG_OX, REG_OY, REG_UNIT, WLD_UNIT;
-extern const int16_t REG_PTS[], WLD_PTS[];
+extern const uint8_t REG_PTS[], WLD_PTS[];
 extern const MapShape REG_FILL_FINE[], REG_FILL_COARSE[], REG_COAST_FINE[], REG_COAST_COARSE[],
     REG_BORDER_FINE[], REG_BORDER_COARSE[], WLD_FILL[], WLD_COAST[], WLD_BORDER[];
 extern const uint32_t REG_FILL_FINE_N, REG_FILL_COARSE_N, REG_COAST_FINE_N, REG_COAST_COARSE_N,
@@ -43,3 +43,24 @@ inline const char* mapNameEn(uint32_t off) {
   return *en ? en : fi;
 }
 inline const char* mapName(uint32_t off, bool english) { return english ? mapNameEn(off) : mapNameFi(off); }
+
+// Reads a shape's points in order. The first point is stored as two int16, each
+// following one as the step from the previous point: two int8, or 0x80 and two int16
+// for a long step. About half the size of storing every point in full.
+struct MapPoints {
+  const uint8_t* p;
+  int x, y;                                  // current point, in layer units
+  explicit MapPoints(const uint8_t* s)
+      : p(s + 4), x((int16_t)(s[0] | s[1] << 8)), y((int16_t)(s[2] | s[3] << 8)) {}
+  void next() {
+    if (p[0] == 0x80) {
+      x = (int16_t)(x + (p[1] | p[2] << 8));   // 16-bit wrap-around, as stored
+      y = (int16_t)(y + (p[3] | p[4] << 8));
+      p += 5;
+    } else {
+      x += (int8_t)p[0];
+      y += (int8_t)p[1];
+      p += 2;
+    }
+  }
+};

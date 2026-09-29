@@ -84,10 +84,33 @@ int trafficParse(JsonDocument& doc, Plane* out, uint32_t now) {
   return n;
 }
 
+// Finds planes of the previous report by their hex code in one pass instead of
+// searching the whole list for each new plane (up to 400 x 400 string compares).
+namespace {
+const int HASH_SIZE = 1024;                  // power of two, > 2 x MAX_PLANES
+uint32_t hexKey(const char* h) {
+  uint32_t k = 2166136261u;                  // FNV-1a
+  for (; *h; h++) k = (k ^ (uint8_t)*h) * 16777619u;
+  return k;
+}
+}  // namespace
+
 void trafficMerge(AppState& s, Plane*& incoming, int n) {
+  static int16_t slot[HASH_SIZE];
+  memset(slot, 0xFF, sizeof slot);           // -1: empty
+  for (int i = 0; i < s.nPlanes; i++) {
+    uint32_t h = hexKey(s.planes[i].hex) & (HASH_SIZE - 1);
+    while (slot[h] >= 0) h = (h + 1) & (HASH_SIZE - 1);
+    slot[h] = i;
+  }
+  auto findOld = [&](const char* hex) -> Plane* {
+    for (uint32_t h = hexKey(hex) & (HASH_SIZE - 1); slot[h] >= 0; h = (h + 1) & (HASH_SIZE - 1))
+      if (!strcmp(s.planes[slot[h]].hex, hex)) return &s.planes[slot[h]];
+    return nullptr;
+  };
   for (int i = 0; i < n; i++) {
     Plane& p = incoming[i];
-    Plane* old = s.find(p.hex);
+    Plane* old = findOld(p.hex);
     if (old) {
       p.trailN = old->trailN;
       p.trailHead = old->trailHead;
