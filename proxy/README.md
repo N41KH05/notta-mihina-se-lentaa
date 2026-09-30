@@ -6,7 +6,7 @@ To show live traffic in the demo, deploy this small Cloudflare Worker (free plan
 
 1. Create a Worker in the Cloudflare dashboard (**Workers & Pages → Create → Worker**), paste the contents of [`worker.js`](worker.js), and deploy it.
 2. Set `ALLOWED_ORIGIN` in the worker to your own site (e.g. `https://<user>.github.io`), so that only your page can use it.
-3. In `simulator/page.html`, set `const LIVE_PROXY = "https://<name>.<account>.workers.dev/";`. Then rebuild the simulator and copy it to `docs/simulator.html`.
+3. In `docs/simulator.js`, set `const LIVE_PROXY = "https://<name>.<account>.workers.dev/";`.
 
    To try a proxy without rebuilding, add it to the page address instead: `simulator.html?proxy=https://<name>.<account>.workers.dev/`
 
