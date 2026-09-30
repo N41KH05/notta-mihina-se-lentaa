@@ -17,3 +17,11 @@ int netAirlabsCallsToday();
 // Address search (OpenStreetMap Nominatim). Returns how many were found, or -1 if the
 // search failed (no connection etc.). Blocking: call from a background task.
 int netSearchPlaces(const char* query, Place* out, int max);
+
+// ============================================================================
+//  Settings page for a phone (web.cpp)
+// ============================================================================
+// The settings page for a phone or computer on the same Wi-Fi (http://<address>/).
+// The address is shown on the device under Asetukset.
+void webInit(AppState* state, void* lock);
+void webLoop();          // call often from the main loop; starts once Wi-Fi is up

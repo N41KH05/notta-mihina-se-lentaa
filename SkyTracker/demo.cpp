@@ -1,10 +1,10 @@
-// Simulated traffic around home, for trying the device without internet.
 #include "demo.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 
+// Simulated traffic around home, for trying the device without internet.
 namespace {
 struct Airline { const char *icao, *iata, *name; };
 const Airline AIRLINES[] = {{"FIN", "AY", "Finnair"}, {"SAS", "SK", "Scandinavian Airlines"},
@@ -13,17 +13,17 @@ const Airline AIRLINES[] = {{"FIN", "AY", "Finnair"}, {"SAS", "SK", "Scandinavia
                             {"KLM", "KL", "KLM"}, {"QTR", "QR", "Qatar Airways"}};
 // City names as shown on screen (Finnish, English), and the airport positions.
 struct Airport { const char *code, *cityFi, *cityEn; float lat, lon; };
-const Airport AIRPORTS[] = {
+const Airport DEMO_AIRPORTS[] = {
   {"HEL", "Helsinki", "Helsinki", 60.317f, 24.963f},  {"ARN", "Tukholma", "Stockholm", 59.652f, 17.919f},
   {"LHR", "Lontoo", "London", 51.470f, -0.454f},      {"FRA", "Frankfurt", "Frankfurt", 50.033f, 8.570f},
   {"AMS", "Amsterdam", "Amsterdam", 52.310f, 4.768f}, {"OUL", "Oulu", "Oulu", 64.930f, 25.355f},
   {"CPH", "Kööpenhamina", "Copenhagen", 55.618f, 12.656f}, {"DOH", "Doha", "Doha", 25.273f, 51.608f},
   {"TLL", "Tallinna", "Tallinn", 59.413f, 24.833f},   {"RIX", "Riika", "Riga", 56.924f, 23.971f},
   {"TKU", "Turku", "Turku", 60.514f, 22.263f},        {"OSL", "Oslo", "Oslo", 60.194f, 11.100f}};
-const int N_AIRPORTS = sizeof AIRPORTS / sizeof AIRPORTS[0];
+const int N_DEMO_AIRPORTS = sizeof DEMO_AIRPORTS / sizeof DEMO_AIRPORTS[0];
 const char* cityOf(const char* code) {
-  for (int i = 0; i < N_AIRPORTS; i++)
-    if (!strcmp(AIRPORTS[i].code, code)) return TR(AIRPORTS[i].cityFi, AIRPORTS[i].cityEn);
+  for (int i = 0; i < N_DEMO_AIRPORTS; i++)
+    if (!strcmp(DEMO_AIRPORTS[i].code, code)) return TR(DEMO_AIRPORTS[i].cityFi, DEMO_AIRPORTS[i].cityEn);
   return code;
 }
 const char* TYPES[] = {"A20N", "A321", "A359", "E190", "AT76", "B738", "A333", "BCS3", "B789"};
@@ -67,13 +67,13 @@ void demoInit(AppState& s, uint32_t nowMs) {
     snprintf(r.flight, sizeof r.flight, "%s%d", al.iata, num);
     snprintf(r.airline, sizeof r.airline, "%s", al.name);
     int a = rnd() % 12, b = (a + 1 + rnd() % 11) % 12;
-    snprintf(r.from, sizeof r.from, "%s", AIRPORTS[a].code);
-    snprintf(r.fromCity, sizeof r.fromCity, "%s", cityOf(AIRPORTS[a].code));
-    snprintf(r.to, sizeof r.to, "%s", AIRPORTS[b].code);
-    snprintf(r.toCity, sizeof r.toCity, "%s", cityOf(AIRPORTS[b].code));
+    snprintf(r.from, sizeof r.from, "%s", DEMO_AIRPORTS[a].code);
+    snprintf(r.fromCity, sizeof r.fromCity, "%s", cityOf(DEMO_AIRPORTS[a].code));
+    snprintf(r.to, sizeof r.to, "%s", DEMO_AIRPORTS[b].code);
+    snprintf(r.toCity, sizeof r.toCity, "%s", cityOf(DEMO_AIRPORTS[b].code));
     r.hasDest = true;
-    r.toLat = AIRPORTS[b].lat;
-    r.toLon = AIRPORTS[b].lon;
+    r.toLat = DEMO_AIRPORTS[b].lat;
+    r.toLon = DEMO_AIRPORTS[b].lon;
   }
   s.demo = true;
   s.apiOk = true;

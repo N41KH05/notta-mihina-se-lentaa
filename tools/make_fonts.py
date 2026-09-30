@@ -2,7 +2,7 @@
 """Turn DejaVu Sans into Adafruit-GFX fonts (1-bit, same look as the Pi version).
 Writes SkyTracker/fonts.h. Extra glyphs: \\x80 up-arrow, \\x81 down-arrow,
 \\x82 degree, \\x83 middle dot, \\x84 ellipsis,
-\\x85-\\x8A: Finnish/Swedish letters. Text is written in UTF-8 and mapped by utf8.h."""
+\\x85-\\x8A: Finnish/Swedish letters. Text is written in UTF-8 and mapped by utf8ToFont in render.h."""
 import os
 from PIL import Image, ImageDraw, ImageFont
 
