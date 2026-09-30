@@ -1,7 +1,7 @@
 // Settings page for a phone (or any browser) on the same Wi-Fi. Units, home, night
 // hours, plane photos and the AirLabs key can be changed here; everything is saved
 // in flash like the on-screen settings. The page follows the device language.
-#include "web.h"
+#include "net.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -9,7 +9,6 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <time.h>
-#include "net.h"
 
 void webSaved(bool homeMoved, bool keyChanged);   // SkyTracker.ino: store and apply
 const char* resetReasonText();                    // SkyTracker.ino: why it last started

@@ -21,12 +21,7 @@
 #include "render.h"
 #include "net.h"
 #include "demo.h"
-#include "app.h"
 #include "ui.h"
-#include "photo.h"
-#include "web.h"
-#include "places.h"
-#include "canvas.h"
 
 AppState state;
 SemaphoreHandle_t lock;

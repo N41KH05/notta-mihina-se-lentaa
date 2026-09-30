@@ -4,7 +4,6 @@
 #include <string.h>
 #include <math.h>
 #include "config.h"
-#include "lang.h"
 
 // Display units, chosen on screen and saved in flash (see SkyTracker.ino).
 struct Units {
@@ -180,3 +179,40 @@ struct AppState {
     return n;
   }
 };
+
+// ============================================================================
+//  Screen language
+// ============================================================================
+enum Lang : uint8_t { LANG_FI = 0, LANG_EN = 1 };
+inline uint8_t language = DEFAULT_LANGUAGE;      // chosen in Settings, saved in flash
+
+#define TR(fi, en) (language == LANG_EN ? (en) : (fi))
+
+inline char decimalSep() { return language == LANG_EN ? '.' : ','; }
+inline char thousandsSep() { return language == LANG_EN ? ',' : ' '; }
+// Replace '.' with the local decimal separator (in place).
+// The home marker's label. The default (empty, or the default word in either language)
+// follows the language; a name of the user's own is shown as it is.
+inline bool isDefaultHomeName(const char* n) { return !n[0] || !strcmp(n, "Koti") || !strcmp(n, "Home"); }
+inline const char* homeLabel(const char* n) { return isDefaultHomeName(n) ? TR("Koti", "Home") : n; }
+inline void localDecimal(char* s) {
+  for (char sep = decimalSep(); *s; s++) if (*s == '.') *s = sep;
+}
+
+// ============================================================================
+//  Photo card
+// ============================================================================
+// The photo card shown over the map for the selected plane (Planespotters.net).
+enum PhotoState : uint8_t { PHOTO_NONE, PHOTO_LOADING, PHOTO_READY, PHOTO_MISSING };
+static const int PHOTO_W = 272, PHOTO_H = 122;         // picture size inside the card
+
+struct PhotoCard {
+  char hex[8];             // which plane this is for
+  char reg[12];
+  PhotoState state;
+  bool hidden;             // tapped away by the user
+  uint16_t* pix;           // PHOTO_W x PHOTO_H pixels, RGB565 (kept in memory only)
+  char photographer[48];
+  char link[160];          // the photo's page (Planespotters asks for a link: shown as a QR code)
+};
+inline PhotoCard photo;

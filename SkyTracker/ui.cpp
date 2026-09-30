@@ -1,11 +1,11 @@
 // Settings and on-screen Wi-Fi setup.
 #include "ui.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include "text.h"
-#include "utf8.h"
 #include "render.h"
+#include "mapdata.h"
 
 #define RGB(r, g, b) (uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
 namespace {
@@ -17,7 +17,7 @@ const uint16_t C_BG = RGB(238, 241, 246), C_CARD = 0xFFFF, C_NAVY = RGB(22, 36, 
                C_WHITE = 0xFFFF, C_SOFT = RGB(200, 210, 230);
 const int W = SCREEN_W, H = SCREEN_H;
 
-// ---- text (text.cpp) -------------------------------------------------------------
+// ---- text ------------------------------------------------------------------------
 void fitCopy(char* dst, size_t n, const char* src, const Fnt& fn, int maxW) {
   utf8ToFont(src, dst, n);                 // one byte per character from here on
   int len = strlen(dst);
@@ -671,4 +671,174 @@ void uiRender(Adafruit_GFX& g, AppState& s, uint32_t now) {
     case S_PLACES: drawPlaces(g, now); break;
     default: break;
   }
+}
+
+// ============================================================================
+//  Touch gestures and map actions
+// ============================================================================
+void Gestures::update(const TouchPt* p, int n, uint32_t now, void (*emit)(const Ev&)) {
+  if (n >= 2) {                                        // two fingers: pinch to zoom
+    float d = hypotf(p[0].x - p[1].x, p[0].y - p[1].y);
+    if (!pinching) {
+      pinching = true;
+      pinchStart = d;
+      if (dragging) emit(Ev{EV_DRAG_END, 0, 0, 0, 0});
+      dragging = false;
+    } else if (pinchStart > 20 && (d > pinchStart * 1.45f || d < pinchStart / 1.45f)) {
+      emit(Ev{EV_ZOOM, 0, 0, (int16_t)(d > pinchStart ? 1 : -1), 0});
+      pinchStart = d;
+    }
+    down = true;
+  } else if (n == 1) {
+    if (!down) {
+      down = true; dragging = false; pinching = false;
+      sx = lx = p[0].x; sy = ly = p[0].y;
+      t0 = now;
+    } else if (!pinching) {
+      if (!dragging && (abs(p[0].x - sx) > 10 || abs(p[0].y - sy) > 10) && sx < MAP_W) dragging = true;
+      if (dragging && (p[0].x != lx || p[0].y != ly))
+        emit(Ev{EV_DRAG, p[0].x, p[0].y, (int16_t)(p[0].x - lx), (int16_t)(p[0].y - ly)});
+    }
+    lx = p[0].x; ly = p[0].y;
+  } else if (down) {                                   // finger lifted
+    if (dragging) emit(Ev{EV_DRAG_END, 0, 0, 0, 0});
+    else if (!pinching && now - t0 < 600) emit(Ev{EV_TAP, sx, sy, 0, 0});
+    down = dragging = pinching = false;
+  }
+}
+
+void appGoHome(AppState& s) {
+  s.cx = mercX(cfg.homeLon);
+  s.cy = mercY(cfg.homeLat);
+  s.zoom = START_ZOOM;
+  s.selHex[0] = 0;
+  s.follow = false;
+}
+
+void appStartPickHome(AppState& s, const Place& p) {
+  s.pickHome = true;
+  snprintf(s.pickName, sizeof s.pickName, "%s", p.name);
+  s.cx = s.pickX = mercX(p.lon);
+  s.cy = s.pickY = mercY(p.lat);
+  s.zoom = 10;
+  s.selHex[0] = 0;
+  s.follow = false;
+}
+
+void appEndPickHome(AppState& s, bool save) {
+  if (save) {
+    cfg.homeLat = latFromY(s.cy);
+    cfg.homeLon = lonFromX(s.cx);
+  }
+  s.pickHome = false;
+  appGoHome(s);
+}
+
+void appPan(AppState& s, int dx, int dy) {
+  float m = metresPerPx(s.zoom);
+  s.cx = fmaxf(-2.0e7f, fminf(2.0e7f, s.cx - dx * m));
+  s.cy = fmaxf(-1.6e7f, fminf(1.6e7f, s.cy + dy * m));
+  s.follow = false;
+}
+
+void appZoom(AppState& s, int d) {
+  s.zoom += d;
+  if (s.zoom < MIN_ZOOM) s.zoom = MIN_ZOOM;
+  if (s.zoom > MAX_ZOOM) s.zoom = MAX_ZOOM;
+}
+
+static void selectPlane(AppState& s, const Plane& p, void (*requestRoute)(const char*)) {
+  snprintf(s.selHex, sizeof s.selHex, "%s", p.hex);
+  if (requestRoute) requestRoute(p.cs);
+}
+
+int appTap(AppState& s, int x, int y, uint32_t nowMs, void (*requestRoute)(const char*)) {
+  int row = -1;
+  UiHit hit = uiHitTest(x, y, s, &row);
+  if (s.pickHome) {                         // setting home: only moving the map (the caller saves)
+    if (hit == HIT_ZOOM_IN) appZoom(s, 1);
+    else if (hit == HIT_ZOOM_OUT) appZoom(s, -1);
+    else if (hit == HIT_HOME) { s.cx = s.pickX; s.cy = s.pickY; }
+    return hit;
+  }
+  switch (hit) {
+    case HIT_ZOOM_IN:  appZoom(s, 1); break;
+    case HIT_ZOOM_OUT: appZoom(s, -1); break;
+    case HIT_HOME:     appGoHome(s); break;
+    case HIT_FOLLOW:   s.follow = !s.follow; break;
+    case HIT_CLOSE:    s.selHex[0] = 0; s.follow = false; break;
+    case HIT_PHOTO:    photo.hidden = true; break;          // tap the photo card to hide it
+    case HIT_LIST_ROW: {
+      const char* hex = listRowHex(row);
+      Plane* p = hex ? s.find(hex) : nullptr;
+      if (p) selectPlane(s, *p, requestRoute);
+      break;
+    }
+    case HIT_MAP: {
+      s.advance(nowMs);
+      int i = planeAt(s, x, y, 30);
+      if (i >= 0) selectPlane(s, s.planes[i], requestRoute);
+      else if (s.selHex[0]) { s.selHex[0] = 0; s.follow = false; }   // empty map: back to list
+      break;
+    }
+    default: break;
+  }
+  return hit;
+}
+
+// ============================================================================
+//  Finding a town by name (setting home without internet)
+// ============================================================================
+namespace {
+// Lower-case one font-coded character (see render.h: 0x88-0x8A are Ä, Ö, Å; 0x8C Š; 0x8E Ž).
+char lowerFont(char c) {
+  uint8_t u = (uint8_t)c;
+  if (u >= 'A' && u <= 'Z') return (char)(u + 32);
+  if (u == 0x88 || u == 0x89 || u == 0x8A) return (char)(u - 3);
+  if (u == 0x8C || u == 0x8E) return (char)(u - 1);
+  return c;
+}
+bool startsWith(const char* s, const char* q) {
+  for (; *q; s++, q++)
+    if (!*s || lowerFont(*s) != lowerFont(*q)) return false;
+  return true;
+}
+// Match at the start of the name or of any word in it ("Kristiinankaupunki" is found
+// with "kris", "Staraja Russa" with "russa").
+bool matches(const char* name, const char* q) {
+  if (startsWith(name, q)) return true;
+  for (const char* p = name; *p; p++)
+    if ((*p == ' ' || *p == '-') && startsWith(p + 1, q)) return true;
+  return false;
+}
+}  // namespace
+
+int placeSearchOffline(const char* query, Place* out, int max) {
+  char q[64];
+  utf8ToFont(query, q, sizeof q);
+  // trim spaces and anything after a comma ("Helsinki, Suomi" -> "Helsinki")
+  char* c = strchr(q, ',');
+  if (c) *c = 0;
+  char* s = q;
+  while (*s == ' ') s++;
+  for (int i = (int)strlen(s) - 1; i >= 0 && s[i] == ' '; i--) s[i] = 0;
+  if (!*s) return 0;
+  int n = 0;
+  // Two passes: exact-start matches of big towns first, then the rest.
+  for (int pass = 0; pass < 2 && n < max; pass++)
+    for (uint32_t i = 0; i < PLACES_N && n < max; i++) {
+      const MapPlace& p = PLACES[i];
+      // Match either language's name; show the one for the chosen language.
+      const char* fi = mapNameFi(p.name);
+      const char* en = mapNameEn(p.name);
+      bool first = (startsWith(fi, s) || startsWith(en, s)) && p.big;
+      if (pass == 0 ? !first : (first || !(matches(fi, s) || matches(en, s)))) continue;
+      const char* name = mapName(p.name, language == LANG_EN);
+      Place& o = out[n++];
+      snprintf(o.name, sizeof o.name, "%s", name);
+      snprintf(o.detail, sizeof o.detail, "%s", TR("kaupunki kartalta (ilman nettiä)", "town from the map (offline)"));
+      o.lat = latFromY((float)p.y);
+      o.lon = lonFromX((float)p.x);
+    }
+  return n;
 }

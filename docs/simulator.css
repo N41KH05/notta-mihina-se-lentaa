@@ -49,10 +49,6 @@ canvas:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 .tryrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 .try { font: 600 14px var(--font-body); color: #fff; background: var(--accent); border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer; }
 .try:hover { filter: brightness(1.08); }
-.modes[hidden] { display: none; }
-.modes { display: inline-flex; border: 1px solid var(--chip-edge); border-radius: 8px; overflow: hidden; background: var(--chip); }
-.modes button { font: 600 14px var(--font-body); color: var(--bench-ink); background: transparent; border: 0; padding: 8px 14px; cursor: pointer; }
-.modes button[aria-pressed="true"] { background: #162442; color: #fff; }
 .hint b { font-weight: 600; }
 .try:focus-visible { outline: 3px solid var(--bench-ink); outline-offset: 2px; }
 .hint { font-size: 14px; color: var(--muted); min-width: 0; }

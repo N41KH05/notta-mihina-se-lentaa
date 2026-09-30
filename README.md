@@ -44,10 +44,17 @@ There's a 3D-printable case in [`case/`](case/). It's closed on all sides, has t
 ## Repository
 
 - `SkyTracker/`: the firmware. `config.h` has the settings.
+  - `SkyTracker.ino`: start-up, main loop, saved settings, Wi-Fi recovery
+  - `model.h`: the shared data (planes, routes, settings) and the language switch
+  - `board.cpp`: the display and touch hardware
+  - `render.cpp`: drawing the map, planes, flight panel and text
+  - `ui.cpp`: touch gestures and the full-screen menus (settings, Wi-Fi, home)
+  - `net.cpp`: fetching flight data, routes and photos; `web.cpp`: the phone settings page
+  - `demo.cpp`: simulated traffic
+  - generated or third-party: `mapdata.cpp` (tools/make_map.py), `fonts.h` (tools/make_fonts.py), `qr.c`
 - `simulator/`: builds the browser version (`docs/sim.wasm`).
 - `case/`: the enclosure (OpenSCAD source and STLs).
 - `tools/`: scripts that generate the map data and fonts.
-- `proxy/`: an optional Cloudflare Worker for live data in the browser demo.
 - `docs/`: the GitHub Pages site.
 
 ## Data

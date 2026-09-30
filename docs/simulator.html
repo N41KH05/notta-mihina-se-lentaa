@@ -11,7 +11,7 @@
 <div class="wrap">
   <header>
     <h1>Notta mihinä se lentää? – simulator</h1>
-    <p class="spec">WAVESHARE ESP32-S3-TOUCH-LCD-7 · 800 × 480 · <span id="modeLabel">STARTING</span></p>
+    <p class="spec">WAVESHARE ESP32-S3-TOUCH-LCD-7 · 800 × 480 · SIMULATED TRAFFIC</p>
     <p class="spec back"><a href="./">← Back to the project page</a></p>
   </header>
 
@@ -31,21 +31,13 @@
   </ul>
 
   <div class="tryrow">
-    <div class="modes" id="modes" role="group" aria-label="Aircraft data" hidden>
-      <button type="button" id="modeLive" aria-pressed="true">Live data</button>
-      <button type="button" id="modeSim" aria-pressed="false">Simulated</button>
-    </div>
-    <span class="hint" id="liveNote"></span>
-  </div>
-
-  <div class="tryrow">
     <button type="button" id="firstRun" class="try">Show the first-start Wi-Fi setup</button>
     <span class="hint">Wi-Fi is simulated here: any password of 8 or more characters connects.</span>
   </div>
 
   <div class="alt"><span>Altitude</span><span>ground</span><span class="bar" aria-hidden="true"></span><span>FL400</span></div>
 
-  <p class="note">This page runs the firmware's own drawing, touch and data-parsing code, compiled for the browser, so what you see is what the board will show. The aircraft here are simulated; the board itself shows live traffic from public ADS-B services. Those services don't accept requests directly from web pages, so live data in the browser requires the optional proxy described in the repository (<code>proxy/README.md</code>).</p>
+  <p class="note">This page runs the firmware's own drawing, touch and data code, compiled for the browser, so what you see is what the board shows. The aircraft are simulated, like the board's demo mode; the board itself shows live traffic.</p>
 </div>
 
 <script src="simulator.js?v=12"></script>
