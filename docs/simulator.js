@@ -1,115 +1,5 @@
-<!doctype html>
-<html lang="en">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Notta mihinä se lentää? – simulator</title>
-<style>
-/* Layout: the 7" board sits on a workbench; a short spec line and the gesture legend below it. */
-:root {
-  --bench: #e6e9ee;
-  --bench-ink: #1b2336;
-  --muted: #5d6679;
-  --bezel: #0e1117;
-  --bezel-edge: #2a3140;
-  --pcb: #0f5a4a;
-  --accent: #e23a5e;
-  --chip: #ffffff;
-  --chip-edge: #c9cfda;
-  --font-display: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bench: #11151d; --bench-ink: #e8ecf3; --muted: #97a1b3; --bezel: #05070a;
-    --bezel-edge: #2b3242; --chip: #1b2130; --chip-edge: #323b4e; color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bench: #11151d; --bench-ink: #e8ecf3; --muted: #97a1b3; --bezel: #05070a;
-  --bezel-edge: #2b3242; --chip: #1b2130; --chip-edge: #323b4e; color-scheme: dark;
-}
-body { background: var(--bench); color: var(--bench-ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
-.wrap { max-width: 1000px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 40px; display: grid; gap: 18px; }
-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 20px; }
-h1 { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: clamp(26px, 4vw, 36px); letter-spacing: 0.01em; text-wrap: balance; }
-.spec { margin: 0; font-family: var(--font-mono); font-size: 12px; color: var(--muted); letter-spacing: 0.04em; }
-.device {
-  background: var(--bezel); border: 1px solid var(--bezel-edge); border-radius: 18px;
-  padding: clamp(10px, 2.2vw, 22px); box-shadow: 0 18px 40px -18px rgba(10, 16, 30, 0.55);
-  position: relative;
-}
-.device::after {           /* the little status LED on the bezel */
-  content: ""; position: absolute; right: clamp(12px, 2vw, 20px); bottom: 6px; width: 6px; height: 6px;
-  border-radius: 50%; background: #3ddc84; box-shadow: 0 0 6px #3ddc84;
-}
-.screen { position: relative; aspect-ratio: 800 / 480; max-width: 100%; background: #16243f; border-radius: 3px; overflow: hidden; }
-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; image-rendering: auto; }
-canvas:active { cursor: grabbing; }
-canvas:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-.status[hidden] { display: none; }
-.status { pointer-events: none; user-select: none; -webkit-user-select: none; position: absolute; inset: 0; display: grid; place-items: center; color: #dbe3f2; font-family: var(--font-mono); font-size: 13px; text-align: center; padding: 16px; }
-.legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.legend li { display: flex; align-items: center; gap: 8px; background: var(--chip); border: 1px solid var(--chip-edge); border-radius: 8px; padding: 6px 12px; font-size: 14px; }
-.legend b { font-family: var(--font-display); font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; font-size: 13px; }
-.tryrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
-.try { font: 600 14px var(--font-body); color: #fff; background: var(--accent); border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer; }
-.try:hover { filter: brightness(1.08); }
-.modes[hidden] { display: none; }
-.modes { display: inline-flex; border: 1px solid var(--chip-edge); border-radius: 8px; overflow: hidden; background: var(--chip); }
-.modes button { font: 600 14px var(--font-body); color: var(--bench-ink); background: transparent; border: 0; padding: 8px 14px; cursor: pointer; }
-.modes button[aria-pressed="true"] { background: #162442; color: #fff; }
-.hint b { font-weight: 600; }
-.try:focus-visible { outline: 3px solid var(--bench-ink); outline-offset: 2px; }
-.hint { font-size: 14px; color: var(--muted); min-width: 0; }
-.note { margin: 0; max-width: 68ch; color: var(--muted); font-size: 14px; }
-.alt { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); flex-wrap: wrap; }
-.alt .bar { width: 160px; max-width: 40vw; height: 8px; border-radius: 4px;
-  background: linear-gradient(90deg, #e24c28, #f28a1e, #e8be1e, #6eb438, #20a08c, #2870d6, #7642ce); }
-@media (prefers-reduced-motion: reduce) { .device::after { box-shadow: none; } }
-</style>
-
-<div class="wrap">
-  <header>
-    <h1>Notta mihinä se lentää? – simulator</h1>
-    <p class="spec">WAVESHARE ESP32-S3-TOUCH-LCD-7 · 800 × 480 · <span id="modeLabel">STARTING</span></p>
-  </header>
-
-  <div class="device">
-    <div class="screen">
-      <canvas id="screen" width="800" height="480" tabindex="0" aria-label="Screen: drag to move the map, scroll to zoom, click a plane to select it"></canvas>
-      <div class="status" id="status">Starting the firmware…</div>
-    </div>
-  </div>
-
-  <ul class="legend" aria-label="Controls">
-    <li><b>Drag</b> move the map</li>
-    <li><b>Scroll</b> or pinch to zoom</li>
-    <li><b>Click</b> a plane or a list row</li>
-    <li><b>+ − ⌂</b> buttons work too</li>
-    <li><b>Gear</b> settings and Wi-Fi</li>
-  </ul>
-
-  <div class="tryrow">
-    <div class="modes" id="modes" role="group" aria-label="Aircraft data" hidden>
-      <button type="button" id="modeLive" aria-pressed="true">Live data</button>
-      <button type="button" id="modeSim" aria-pressed="false">Simulated</button>
-    </div>
-    <span class="hint" id="liveNote"></span>
-  </div>
-
-  <div class="tryrow">
-    <button type="button" id="firstRun" class="try">Show the first-start Wi-Fi setup</button>
-    <span class="hint">Wi-Fi is simulated here: any password of 8 or more characters connects.</span>
-  </div>
-
-  <div class="alt"><span>Altitude</span><span>ground</span><span class="bar" aria-hidden="true"></span><span>FL400</span></div>
-
-  <p class="note">This page runs the firmware's own drawing, touch and data-parsing code, compiled for the browser, so what you see is what the board will show. The aircraft here are simulated; the board itself shows live traffic from public ADS-B services. Those services don't accept requests directly from web pages, so live data in the browser requires the optional proxy described in the repository (<code>proxy/README.md</code>).</p>
-</div>
-
-<script>
-const WASM_GZ_B64 = "__WASM__";
+// The firmware build (simulator/build.py writes it next to this file).
+const WASM_URL = "sim.wasm?v=12";
 
 // Optional: a CORS proxy for the live data (see proxy/README.md). It is called as
 // PROXY?url=<encoded service URL>. Can also be given as ?proxy=... in the page address.
@@ -121,19 +11,20 @@ const LIVE_PROXY = "";
   const ctx = canvas.getContext("2d");
   const fail = (msg) => { statusEl.hidden = false; statusEl.textContent = msg; };
 
-  if (!("WebAssembly" in window) || !("DecompressionStream" in window)) {
+  if (!("WebAssembly" in window)) {
     fail("This browser is too old to run the simulator. Try a current Chrome, Edge, Firefox or Safari.");
     return;
   }
 
-  // Unpack the embedded firmware build.
+  // Load the firmware build.
   let bytes;
   try {
-    const raw = Uint8Array.from(atob(WASM_GZ_B64), (c) => c.charCodeAt(0));
-    const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream("gzip"));
-    bytes = await new Response(stream).arrayBuffer();
+    const res = await fetch(WASM_URL);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    bytes = await res.arrayBuffer();
   } catch (e) {
-    fail("Couldn't unpack the simulator (" + e.message + "). Reload the page to try again.");
+    fail("Couldn't load the simulator (" + e.message + "). If you opened the file straight from disk, " +
+         "serve the folder instead: python -m http.server -d docs");
     return;
   }
 
@@ -397,4 +288,3 @@ const LIVE_PROXY = "";
   }
   requestAnimationFrame(tick);
 })();
-</script>

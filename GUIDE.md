@@ -135,13 +135,13 @@ Open Tools → Serial Monitor at 115200 baud (on the USB port) to see what it's 
 
 ## Browser simulator
 
-`simulator/SkyTracker Simulator.html` runs the firmware's drawing, touch and parsing code in a browser. Drag with the mouse, scroll to zoom, click planes. The traffic is simulated, because the position services don't allow requests from web pages. If you want live data there, set up the proxy in [`proxy/README.md`](proxy/README.md).
+The simulator (`docs/simulator.html`, with its `.css`, `.js` and the firmware build `sim.wasm`) runs the firmware's drawing, touch and parsing code in a browser. It's on the project site; to run it locally, serve the folder with `python -m http.server -d docs` and open `http://localhost:8000/simulator.html` (browsers won't load the `.wasm` from a file opened straight from disk). Drag with the mouse, scroll to zoom, click planes. The traffic is simulated, because the position services don't allow requests from web pages. If you want live data there, set up the proxy in [`proxy/README.md`](proxy/README.md).
 
 To rebuild it after changing the code:
 
 ```
 pip install ziglang
-python simulator/build.py <path to Adafruit_GFX_Library> <path to ArduinoJson/src>
+python simulator/build.py <path to Adafruit_GFX_Library> <path to ArduinoJson/src>   # writes docs/sim.wasm
 ```
 
 Without arguments it looks for both in `~/Documents/Arduino/libraries`.
