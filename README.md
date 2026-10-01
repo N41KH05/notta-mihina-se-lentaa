@@ -4,7 +4,7 @@ A desk display that shows the planes flying around you. It runs on a Waveshare E
 
 The name is Finnish, roughly "so, where's that one flying to?". The screen is in English by default and can be switched to Finnish.
 
-You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html?v=15) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
+You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html?v=16) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
 
 <p align="center"><img src="docs/img/hero.png" width="720" alt="The display with a selected flight from Stockholm to Oulu"></p>
 
@@ -17,7 +17,7 @@ You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa
 ## What it does
 
 - Planes around home on a map with coastlines, lakes, towns and airports. Positions update every 4 seconds and the planes move smoothly in between. Colour shows altitude, and the icon shows the kind of aircraft: airliner, wide-body, business jet, propeller plane, light aircraft, helicopter or glider.
-- Tap a plane for its route (e.g. ARN → OUL), estimated arrival, altitude, climb rate, speed, heading, distance and aircraft type. The map draws the path it has flown since take-off, coloured by altitude.
+- Tap a plane for its route (e.g. ARN → OUL), estimated arrival, altitude, climb rate, speed, heading, distance and aircraft type. The aircraft's registered owner shows up where it adds something: for planes with no airline, or when the plane is leased. The map draws the path it has flown since take-off, coloured by altitude.
 - Aircraft photos from Planespotters.net, with the photographer's name and a QR code to the photo page.
 - A dark mode in amber and green, either always on or switching at sunset and sunrise.
 - Wi-Fi and home location are set up on the touchscreen. Home can be found by address search.
@@ -59,7 +59,7 @@ There's a 3D-printable case in [`case/`](case/). It's closed on all sides, has t
 
 ## Data
 
-Positions come from [adsb.fi](https://adsb.fi), [airplanes.live](https://airplanes.live) and [adsb.lol](https://adsb.lol) (whichever answers), flight paths from adsb.lol's track history, routes from [adsbdb](https://www.adsbdb.com), photos from [Planespotters.net](https://www.planespotters.net) and address search from [Nominatim](https://nominatim.org) (© OpenStreetMap contributors). Scheduled times need a free [AirLabs](https://airlabs.co) key. The map is built from [Natural Earth](https://www.naturalearthdata.com) and [OurAirports](https://ourairports.com), both public domain.
+Positions come from [adsb.fi](https://adsb.fi), [airplanes.live](https://airplanes.live) and [adsb.lol](https://adsb.lol) (whichever answers), flight paths from adsb.lol's track history, routes and aircraft owners from [adsbdb](https://www.adsbdb.com), photos from [Planespotters.net](https://www.planespotters.net) and address search from [Nominatim](https://nominatim.org) (© OpenStreetMap contributors). Scheduled times need a free [AirLabs](https://airlabs.co) key. The map is built from [Natural Earth](https://www.naturalearthdata.com) and [OurAirports](https://ourairports.com), both public domain.
 
 The position services are free for personal, non-commercial use. The firmware keeps its request rate low, but check their terms if you do anything bigger with it.
 

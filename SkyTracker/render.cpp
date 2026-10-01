@@ -2,6 +2,7 @@
 #include "render.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include "fonts.h"
 #include "mapdata.h"
 #include "qr.h"
@@ -990,6 +991,16 @@ static void row(Adafruit_GFX& g, int y, const char* lab, const char* value, uint
   if (swatch) g.fillRoundRect(vx - 16, y + 3, 10, 12, 2, swatch);
 }
 
+// Is the registered owner the airline flying it? By ICAO code when both have one,
+// otherwise by the first word of the name ("Ryanair" and "Ryanair DAC").
+static bool sameCompany(const Route& r) {
+  if (r.airlineCode[0] && r.ownerCode[0]) return !strcmp(r.airlineCode, r.ownerCode);
+  const char *a = r.airline, *b = r.owner;
+  int n = 0;
+  while (a[n] && a[n] != ' ' && tolower((uint8_t)a[n]) == tolower((uint8_t)b[n])) n++;
+  return n >= 3 && (!a[n] || a[n] == ' ') && (!b[n] || b[n] == ' ');
+}
+
 static void panelButton(Adafruit_GFX& g, int x, int w, const char* label, bool on) {
   g.fillRoundRect(x, PB_Y, w, PB_H, 8, on ? C_BAR : C_SURFACE);
   g.drawRoundRect(x, PB_Y, w, PB_H, 8, on ? C_PRIMARY : C_BTN_EDGE);
@@ -1110,6 +1121,11 @@ static void panelDetails(Adafruit_GFX& g, AppState& s, const Plane& p, const str
   Route* r = s.route(p.cs);
   bool known = r && r->state == ROUTE_KNOWN;
   bool looking = p.cs[0] && (!r || r->state == ROUTE_PENDING);
+  // The registered owner, only where it adds something: in place of the airline when
+  // there is none, or on its own line when it isn't the airline flying (e.g. leased).
+  const char* owner = r && r->owner[0] && !strcmp(r->hex, p.hex) ? r->owner : nullptr;
+  bool airlineShown = known && r->airline[0];
+  const char* ownerLine = owner && airlineShown && !sameCompany(*r) ? owner : nullptr;
   char title[16], sub[64], t[48];
   snprintf(title, sizeof title, "%s", known && r->flight[0] ? r->flight : p.label());
   const Fnt* tf = &B34;
@@ -1119,6 +1135,8 @@ static void panelDetails(Adafruit_GFX& g, AppState& s, const Plane& p, const str
   if (known && r->airline[0]) {
     if (r->flight[0] && p.cs[0]) snprintf(sub, sizeof sub, "%s  \x83  %s", r->airline, p.cs);
     else snprintf(sub, sizeof sub, "%s", r->airline);
+  } else if (owner) {
+    snprintf(sub, sizeof sub, "%s", owner);
   } else {
     snprintf(sub, sizeof sub, "%s", looking ? "" : typeName(p.type));
   }
@@ -1156,18 +1174,25 @@ static void panelDetails(Adafruit_GFX& g, AppState& s, const Plane& p, const str
   double dist = haversineKm(cfg.homeLat, cfg.homeLon, p.lat, p.lon);
   double brg = bearingDeg(cfg.homeLat, cfg.homeLon, p.lat, p.lon);
   y = 213;
-  fmtAlt(t, sizeof t, p, false);  row(g, y, TR("KORKEUS", "ALTITUDE"), t, altColor(p)); y += 23;
-  fmtVrate(t, sizeof t, p);       row(g, y, TR("NOUSU/LASKU", "VERTICAL RATE"), t);              y += 23;
-  fmtSpeed(t, sizeof t, p);       row(g, y, TR("NOPEUS", "GROUND SPEED"), t);                 y += 23;
+  int dy = ownerLine ? 21 : 23;              // a little tighter to fit the owner line
+  fmtAlt(t, sizeof t, p, false);  row(g, y, TR("KORKEUS", "ALTITUDE"), t, altColor(p)); y += dy;
+  fmtVrate(t, sizeof t, p);       row(g, y, TR("NOUSU/LASKU", "VERTICAL RATE"), t);              y += dy;
+  fmtSpeed(t, sizeof t, p);       row(g, y, TR("NOPEUS", "GROUND SPEED"), t);                 y += dy;
   if (p.hasTrack) snprintf(t, sizeof t, "%03d\x82 %s", rnd(p.track) % 360, compass(p.track));
   else snprintf(t, sizeof t, "--");
-  row(g, y, TR("SUUNTA", "TRACK"), t);        y += 23;
+  row(g, y, TR("SUUNTA", "TRACK"), t);        y += dy;
   char d[24];
   fmtDist(d, sizeof d, dist);
   snprintf(t, sizeof t, "%s %s", d, compass(brg));
-  row(g, y, TR("ETÄISYYS KODISTA", "DISTANCE FROM HOME"), t);      y += 23;
-  row(g, y, TR("KONETYYPPI", "AIRCRAFT TYPE"), p.type[0] ? typeName(p.type) : "--");  y += 23;
+  row(g, y, TR("ETÄISYYS KODISTA", "DISTANCE FROM HOME"), t);      y += dy;
+  row(g, y, TR("KONETYYPPI", "AIRCRAFT TYPE"), p.type[0] ? typeName(p.type) : "--");  y += dy;
   row(g, y, TR("TUNNUS", "REGISTRATION"), p.reg[0] ? p.reg : "--");
+  if (ownerLine) {
+    char o[64];
+    snprintf(o, sizeof o, TR("omistaja %s", "owned by %s"), ownerLine);
+    fit(o, R12, x1 - x0);
+    textR(g, x1, y + 20, o, R12, C_TEXT2);
+  }
 
   int bw = (x1 - x0 - 10) / 2;
   panelButton(g, x0, bw, s.follow ? TR("SEURATAAN", "FOLLOWING") : TR("SEURAA", "FOLLOW"), s.follow);

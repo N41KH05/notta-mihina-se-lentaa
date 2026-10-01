@@ -157,6 +157,10 @@ void routeFilter(JsonDocument& filter) {
   JsonObject fr = filter["response"]["flightroute"].to<JsonObject>();
   fr["callsign_iata"] = true;
   fr["airline"]["name"] = true;
+  fr["airline"]["icao"] = true;
+  JsonObject ac = filter["response"]["aircraft"].to<JsonObject>();
+  ac["registered_owner"] = true;
+  ac["registered_owner_operator_flag_code"] = true;
   for (const char* end : {"origin", "destination"}) {
     fr[end]["iata_code"] = true;
     fr[end]["icao_code"] = true;
@@ -166,11 +170,20 @@ void routeFilter(JsonDocument& filter) {
   }
 }
 
+// The aircraft part of an adsbdb answer (only there when asked by transponder code).
+void aircraftParse(JsonDocument& doc, Route& r) {
+  JsonObject ac = doc["response"]["aircraft"];
+  if (ac.isNull()) return;
+  copyStr(r.owner, sizeof r.owner, ac["registered_owner"] | "");
+  copyStr(r.ownerCode, sizeof r.ownerCode, ac["registered_owner_operator_flag_code"] | "");
+}
+
 bool routeParse(JsonDocument& doc, Route& r) {
   JsonObject route = doc["response"]["flightroute"];
   if (route.isNull()) return false;
   copyStr(r.flight, sizeof r.flight, route["callsign_iata"] | "");
   copyStr(r.airline, sizeof r.airline, route["airline"]["name"] | "");
+  copyStr(r.airlineCode, sizeof r.airlineCode, route["airline"]["icao"] | "");
   copyStr(r.from, sizeof r.from, route["origin"]["iata_code"] | (route["origin"]["icao_code"] | ""));
   copyStr(r.to, sizeof r.to, route["destination"]["iata_code"] | (route["destination"]["icao_code"] | ""));
   copyStr(r.fromCity, sizeof r.fromCity, route["origin"]["municipality"] | "");
@@ -368,28 +381,38 @@ void netFetchPlanes(AppState& s, void* lock) {
 }
 
 void netLookupRoute(AppState& s, void* lock) {
-  char cs[10] = "";
+  char cs[10] = "", hex[8] = "";
   LOCK(lock);
   for (auto& r : s.routes)
-    if (r.state == ROUTE_PENDING) { snprintf(cs, sizeof cs, "%s", r.cs); break; }
+    if (r.state == ROUTE_PENDING) {
+      snprintf(cs, sizeof cs, "%s", r.cs);
+      snprintf(hex, sizeof hex, "%s", r.hex);
+      break;
+    }
   UNLOCK(lock);
   if (!cs[0]) return;
 
+  // One request gives both the route and the aircraft. adsbdb answers 404 to the whole
+  // thing if it doesn't know the aircraft, so then the route is asked for on its own.
   JsonDocument filter;
   routeFilter(filter);
   JsonDocument doc(&psram);
-  char url[96], err[48];
-  int status = -1;
-  if (urlSafe(cs)) {
+  char url[112], err[48];
+  int status = 404;                          // not a normal callsign: no route to look up
+  if (urlSafe(cs) && urlSafe(hex)) {
+    snprintf(url, sizeof url, "https://api.adsbdb.com/v0/aircraft/%s?callsign=%s", hex, cs);
+    status = getJson(url, doc, filter, err, sizeof err);
+  }
+  if (status == 404 && urlSafe(cs)) {
+    doc.clear();
     snprintf(url, sizeof url, "https://api.adsbdb.com/v0/callsign/%s", cs);
     status = getJson(url, doc, filter, err, sizeof err);
-  } else {
-    status = 404;                            // not a normal callsign: no route to look up
   }
 
   LOCK(lock);
   Route* r = s.route(cs);
   if (r && r->state == ROUTE_PENDING) {
+    if (status == 200) aircraftParse(doc, *r);
     if (status == 200 && routeParse(doc, *r)) r->state = ROUTE_KNOWN;
     else if (status == 404 || status == 200) r->state = ROUTE_UNKNOWN;   // no route published
     else r->state = ROUTE_EMPTY;              // network trouble: forget it, ask again later

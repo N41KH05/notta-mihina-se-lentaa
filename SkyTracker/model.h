@@ -98,7 +98,11 @@ enum TimesState : uint8_t { TIMES_NONE = 0, TIMES_PENDING, TIMES_KNOWN, TIMES_UN
 struct Route {
   char cs[10];
   RouteState state;
-  char flight[10], airline[40], from[5], fromCity[24], to[5], toCity[24];
+  char flight[10], airline[40], airlineCode[4], from[5], fromCity[24], to[5], toCity[24];
+  // The aircraft flying it, from the same adsbdb request: its registered owner (often
+  // the airline itself; a leasing company, or a person for private planes).
+  char hex[8];               // the plane the lookup was made for
+  char owner[40], ownerCode[4];
   bool hasDest;              // destination airport position known (for the arrival estimate)
   float toLat, toLon;
   bool hasOrigin;            // departure airport position known (flight path fallback)

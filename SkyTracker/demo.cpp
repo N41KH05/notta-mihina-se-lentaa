@@ -66,6 +66,11 @@ void demoInit(AppState& s, uint32_t nowMs) {
     r.state = ROUTE_KNOWN;
     snprintf(r.flight, sizeof r.flight, "%s%d", al.iata, num);
     snprintf(r.airline, sizeof r.airline, "%s", al.name);
+    snprintf(r.airlineCode, sizeof r.airlineCode, "%s", al.icao);
+    snprintf(r.hex, sizeof r.hex, "%s", p.hex);
+    static const char* LESSORS[] = {"Northwind Aviation Capital", "Baltic Aircraft Leasing"};
+    if (i % 5 == 3) snprintf(r.owner, sizeof r.owner, "%s", LESSORS[i / 5 % 2]);   // made-up names
+    else { snprintf(r.owner, sizeof r.owner, "%s", al.name); snprintf(r.ownerCode, sizeof r.ownerCode, "%s", al.icao); }
     int a = rnd() % 12, b = (a + 1 + rnd() % 11) % 12;
     snprintf(r.from, sizeof r.from, "%s", DEMO_AIRPORTS[a].code);
     snprintf(r.fromCity, sizeof r.fromCity, "%s", cityOf(DEMO_AIRPORTS[a].code));
@@ -104,6 +109,13 @@ void demoInit(AppState& s, uint32_t nowMs) {
     p.hasAlt = p.hasGs = p.hasTrack = p.hasVrate = true;
     p.tMs = nowMs;
     p.addTrail(p.fx, p.fy);
+    // No published routes for these; the Cessna's owner is known (a made-up club).
+    Route& r = s.routes[ROUTE_CACHE - 1 - (&e - extra)];
+    memset(&r, 0, sizeof r);
+    snprintf(r.cs, sizeof r.cs, "%s", p.cs);
+    snprintf(r.hex, sizeof r.hex, "%s", p.hex);
+    if (!strcmp(e.cs, "OHCDA")) snprintf(r.owner, sizeof r.owner, "Ilmailukerho Haukka ry");
+    r.state = ROUTE_UNKNOWN;
   }
   s.demo = true;
   s.apiOk = true;

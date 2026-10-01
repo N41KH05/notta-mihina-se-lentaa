@@ -68,9 +68,9 @@ void appStartPickHome(AppState& s, const Place& p);
 // Save the place under the cross as home (into cfg) and leave pick mode. The caller
 // stores cfg in flash. cancel = leave without changing home.
 void appEndPickHome(AppState& s, bool save);
-// requestRoute(callsign) is called when a plane gets selected (may be null).
+// requestRoute(plane) is called when a plane gets selected (may be null).
 // Returns what was tapped (the caller opens Settings for HIT_SETTINGS).
-int appTap(AppState& s, int x, int y, uint32_t nowMs, void (*requestRoute)(const char*));
+int appTap(AppState& s, int x, int y, uint32_t nowMs, void (*requestRoute)(const Plane&));
 
 // Search the towns built into the map (setting home without internet). Names match from
 // the start of the name or of any word, ignoring case. Returns how many were found.

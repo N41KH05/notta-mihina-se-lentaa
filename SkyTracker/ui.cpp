@@ -766,12 +766,12 @@ void appZoom(AppState& s, int d) {
   if (s.zoom > MAX_ZOOM) s.zoom = MAX_ZOOM;
 }
 
-static void selectPlane(AppState& s, const Plane& p, void (*requestRoute)(const char*)) {
+static void selectPlane(AppState& s, const Plane& p, void (*requestRoute)(const Plane&)) {
   snprintf(s.selHex, sizeof s.selHex, "%s", p.hex);
-  if (requestRoute) requestRoute(p.cs);
+  if (requestRoute) requestRoute(p);
 }
 
-int appTap(AppState& s, int x, int y, uint32_t nowMs, void (*requestRoute)(const char*)) {
+int appTap(AppState& s, int x, int y, uint32_t nowMs, void (*requestRoute)(const Plane&)) {
   int row = -1;
   UiHit hit = uiHitTest(x, y, s, &row);
   if (s.pickHome) {                         // setting home: only moving the map (the caller saves)

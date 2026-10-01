@@ -76,14 +76,15 @@ void fetchLoop(void*) {
   }
 }
 
-void requestRouteLocked(const char* cs) {
-  if (!cs) return;
+// Route and aircraft details for a plane that just got selected (adsbdb, see net.cpp).
+void requestRouteLocked(const Plane& p) {
   static int next = 0;
-  if (!cs[0] || state.demo || state.route(cs)) return;
+  if (!p.cs[0] || state.demo || state.route(p.cs)) return;
   Route& r = state.routes[next];
   next = (next + 1) % ROUTE_CACHE;
   memset(&r, 0, sizeof r);
-  snprintf(r.cs, sizeof r.cs, "%s", cs);
+  snprintf(r.cs, sizeof r.cs, "%s", p.cs);
+  snprintf(r.hex, sizeof r.hex, "%s", p.hex);
   r.state = ROUTE_PENDING;
   xTaskNotifyGive(fetchTask);
 }
@@ -679,7 +680,7 @@ void loop() {
               fabsf(state.cx - mercX(cfg.homeLon)) > 1 || fabsf(state.cy - mercY(cfg.homeLat)) > 1;
   if (away && idleLong && !state.follow && !state.pickHome) { appGoHome(state); xTaskNotifyGive(fetchTask); }
   Plane* sel = state.selected();
-  if (sel && !state.route(sel->cs)) requestRouteLocked(sel->cs);   // retry failed lookups
+  if (sel && !state.route(sel->cs)) requestRouteLocked(*sel);   // retry failed lookups
   // Departure/arrival times for the selected flight: once, then refreshed now and then.
   if (Route* r = sel && cfg.airlabsKey[0] && !state.demo ? state.route(sel->cs) : nullptr) {
     uint32_t age = millis() - r->timesMs;
