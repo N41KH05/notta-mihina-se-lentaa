@@ -470,20 +470,20 @@ static const Tri SHAPE_GLIDER[] = {
   {{-0.08f, -1.0f, 0.08f, -1.0f, 0.06f, 0.95f}}, {{-0.08f, -1.0f, 0.06f, 0.95f, -0.06f, 0.95f}},
   {{-1.25f, -0.36f, 1.25f, -0.36f, 1.25f, -0.24f}}, {{-1.25f, -0.36f, 1.25f, -0.24f, -1.25f, -0.24f}},
   {{-0.32f, 0.84f, 0.32f, 0.84f, 0.32f, 0.96f}}, {{-0.32f, 0.84f, 0.32f, 0.96f, -0.32f, 0.96f}}};
-static const Tri SHAPE_HELI[] = {                    // cabin, tail boom, tail rotor, main rotor
+static const Tri SHAPE_HELI[] = {                    // cabin, tail boom, tail rotor (main rotor: below)
   {{-0.32f, -0.6f, 0.32f, -0.6f, 0.32f, 0.2f}}, {{-0.32f, -0.6f, 0.32f, 0.2f, -0.32f, 0.2f}},
   {{-0.32f, -0.6f, 0.32f, -0.6f, 0.0f, -0.9f}}, {{-0.32f, 0.2f, 0.32f, 0.2f, 0.0f, 0.4f}},
   {{-0.07f, 0.2f, 0.07f, 0.2f, 0.07f, 0.98f}}, {{-0.07f, 0.2f, 0.07f, 0.98f, -0.07f, 0.98f}},
-  {{-0.26f, 0.82f, 0.26f, 0.82f, 0.26f, 0.96f}}, {{-0.26f, 0.82f, 0.26f, 0.96f, -0.26f, 0.96f}},
-  {{0.654f, 0.760f, 0.760f, 0.654f, -0.654f, -0.760f}}, {{0.654f, 0.760f, -0.654f, -0.760f, -0.760f, -0.654f}}, {{0.760f, -0.654f, 0.654f, -0.760f, -0.760f, 0.654f}}, {{0.760f, -0.654f, -0.760f, 0.654f, -0.654f, 0.760f}}};
+  {{-0.26f, 0.82f, 0.26f, 0.82f, 0.26f, 0.96f}}, {{-0.26f, 0.82f, 0.26f, 0.96f, -0.26f, 0.96f}}};
 struct Shape { const Tri* tris; int n; };
 #define SHAPE(a) {a, sizeof a / sizeof a[0]}
 static const Shape SHAPES[] = {SHAPE(SHAPE_JET), SHAPE(SHAPE_WIDE), SHAPE(SHAPE_BIZJET), SHAPE(SHAPE_PROP),
                                SHAPE(SHAPE_LIGHT), SHAPE(SHAPE_HELI), SHAPE(SHAPE_GLIDER)};
 #undef SHAPE
 
+// rotorDeg: angle of a helicopter's main rotor (it turns a little every frame).
 static void planeShape(Adafruit_GFX& g, float x, float y, float heading, float size, uint16_t c,
-                       IconKind kind = ICON_JET) {
+                       IconKind kind = ICON_JET, float rotorDeg = 45) {
   float a = heading * 0.0174533f, sn = sinf(a), cs = cosf(a);
   const Shape& sh = SHAPES[kind];
   for (int k = 0; k < sh.n; k++) {
@@ -496,6 +496,16 @@ static void planeShape(Adafruit_GFX& g, float x, float y, float heading, float s
     }
     g.fillTriangle(p[0], p[1], p[2], p[3], p[4], p[5], c);
   }
+  if (kind == ICON_HELI)                              // two crossed blades over the cabin
+    for (int b = 0; b < 2; b++) {
+      float r = (rotorDeg + b * 90) * 0.0174533f, dx = cosf(r) * size, dy = sinf(r) * size;
+      float w = 0.075f * size, wx = -sinf(r) * w, wy = cosf(r) * w;
+      float cx = x - 0.2f * size * -sn, cy = y - 0.2f * size * cs;   // rotor hub, a bit forward
+      g.fillTriangle(rnd(cx + dx + wx), rnd(cy + dy + wy), rnd(cx + dx - wx), rnd(cy + dy - wy),
+                     rnd(cx - dx - wx), rnd(cy - dy - wy), c);
+      g.fillTriangle(rnd(cx + dx + wx), rnd(cy + dy + wy), rnd(cx - dx - wx), rnd(cy - dy - wy),
+                     rnd(cx - dx + wx), rnd(cy - dy + wy), c);
+    }
 }
 static void ring(Adafruit_GFX& g, int x, int y, int r, int width, uint16_t c) {
   for (int i = 0; i < width; i++) g.drawCircle(x, y, r + i, c);
@@ -821,7 +831,8 @@ int planeAt(AppState& s, int x, int y, int maxPx) {
   return best;
 }
 
-static void drawPlanes(Adafruit_GFX& g, AppState& s, int n) {
+static void drawPlanes(Adafruit_GFX& g, AppState& s, int n, uint32_t nowMs) {
+  float rotor = (nowMs % 3600000) * 0.17f;            // helicopter rotors: about half a turn a second
   float size = V_ZOOM < 7 ? 8 : 10;
   for (int k = 0; k < n; k++) {             // trails underneath
     const Plane& p = s.planes[viewIdx[k]];
@@ -849,8 +860,8 @@ static void drawPlanes(Adafruit_GFX& g, AppState& s, int n) {
       }
       IconKind kind = iconKind(p);
       float ks = sz * iconScale(p, kind);
-      planeShape(g, x, y, hd, ks + 2, p.emergency() ? C_EMERG : C_OUTLINE, kind);
-      planeShape(g, x, y, hd, ks, p.emergency() ? RGB(255, 200, 200) : altColor(p), kind);
+      planeShape(g, x, y, hd, ks + 2, p.emergency() ? C_EMERG : C_OUTLINE, kind, rotor);
+      planeShape(g, x, y, hd, ks, p.emergency() ? RGB(255, 200, 200) : altColor(p), kind, rotor);
       take(x - size, y - size, x + size, y + size);
     }
   bool crowded = n > 25 && V_ZOOM < 8;
@@ -1186,7 +1197,7 @@ void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm
     take(CARD_X - 4, 0, CARD_X + CARD_W + 4, CARD_Y + cardHeight() + 4);   // keep tags off the card
   }
   drawFlightPath(g, s);                      // under the planes
-  drawPlanes(g, s, n);
+  drawPlanes(g, s, n, nowMs);
   drawCoverage(g, s);
   if (card) drawPhotoCard(g, nowMs);
   Plane* sel = s.selected();
