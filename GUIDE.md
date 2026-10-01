@@ -45,6 +45,7 @@ Once it's connected it asks **Where is home?** Home is the centre of the map and
 
 - Drag to move the map, pinch or use + and − to zoom. The house button goes back to home.
 - Tap a plane, on the map or in the list, to see its details. **FOLLOW** keeps it centred; **CLOSE** or a tap on empty map goes back to the list.
+- The selected plane's path since take-off is drawn on the map, coloured by altitude, and keeps growing as it flies. It comes from adsb.lol's track history. If that isn't available, a dashed line from the departure airport is shown instead.
 - The gear in the bottom left opens Settings: Wi-Fi, units, language, home, demo mode and the data status.
 - Colours show altitude: red and orange are low, green is in between, blue and purple are at cruising height.
 - After 5 minutes without a touch it goes back to the home view.
@@ -148,4 +149,4 @@ Without an argument it looks in `~/Documents/Arduino/libraries`.
 
 ## Credits
 
-Positions from adsb.fi, airplanes.live and adsb.lol; routes from adsbdb; address search from Nominatim (© OpenStreetMap contributors); timetables from AirLabs; photos from Planespotters.net and its photographers; map from Natural Earth; airports from OurAirports. JPEGDEC by Larry Bank, QRCode by Richard Moore, DejaVu Sans font. The board's pins and timings follow Waveshare's definition in ESP32_Display_Panel.
+Positions from adsb.fi, airplanes.live and adsb.lol; flight paths from adsb.lol; routes from adsbdb; address search from Nominatim (© OpenStreetMap contributors); timetables from AirLabs; photos from Planespotters.net and its photographers; map from Natural Earth; airports from OurAirports. JPEGDEC by Larry Bank, QRCode by Richard Moore, DejaVu Sans font. The board's pins and timings follow Waveshare's definition in ESP32_Display_Panel.

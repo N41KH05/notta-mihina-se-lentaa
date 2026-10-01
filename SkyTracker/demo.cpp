@@ -74,6 +74,9 @@ void demoInit(AppState& s, uint32_t nowMs) {
     r.hasDest = true;
     r.toLat = DEMO_AIRPORTS[b].lat;
     r.toLon = DEMO_AIRPORTS[b].lon;
+    r.hasOrigin = true;
+    r.fromLat = DEMO_AIRPORTS[a].lat;
+    r.fromLon = DEMO_AIRPORTS[a].lon;
   }
   s.demo = true;
   s.apiOk = true;
@@ -125,4 +128,23 @@ void demoRelabel(AppState& s) {
     snprintf(r.fromCity, sizeof r.fromCity, "%s", cityOf(r.from));
     snprintf(r.toCity, sizeof r.toCity, "%s", cityOf(r.to));
   }
+}
+
+// A made-up path for a demo plane: a smooth curve from its departure airport that
+// arrives along the plane's current heading, climbing out over the first quarter.
+void demoPath(AppState& s, const Plane& p, FlightPath& out) {
+  out.clear();
+  Route* r = s.route(p.cs);
+  if (!r || !r->hasOrigin) { out.state = PATH_MISSING; return; }
+  float x0 = mercX(r->fromLon), y0 = mercY(r->fromLat), x2 = p.fx, y2 = p.fy;
+  float d = hypotf(x2 - x0, y2 - y0), a = p.track * 0.0174533f;
+  float x1 = x2 - sinf(a) * d * 0.45f, y1 = y2 - cosf(a) * d * 0.45f;   // control point
+  const int N = 80;
+  for (int i = 0; i <= N; i++) {
+    float t = (float)i / N, u = 1 - t;
+    float x = u * u * x0 + 2 * u * t * x1 + t * t * x2, y = u * u * y0 + 2 * u * t * y1 + t * t * y2;
+    float climb = t < 0.25f ? sinf(t / 0.25f * 1.5708f) : 1.0f;
+    out.add(x, y, (int)(p.alt * climb));
+  }
+  out.state = out.n >= 2 ? PATH_READY : PATH_MISSING;
 }

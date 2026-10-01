@@ -9,6 +9,8 @@ void netFetchPlanes(AppState& s, void* lock);
 void netLookupRoute(AppState& s, void* lock);
 // Fetch the photo for the selected plane, if one was requested. Takes the lock itself.
 void netFetchPhoto(void* lock);
+// Fetch the selected plane's flight path, if one was requested. Takes the lock itself.
+void netFetchPath(void* lock);
 // Look up departure/arrival times for a flight that asked for them (needs AIRLABS_KEY).
 // Takes the lock itself.
 void netLookupTimes(AppState& s, void* lock);

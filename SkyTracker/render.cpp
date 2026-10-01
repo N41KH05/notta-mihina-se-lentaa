@@ -140,12 +140,10 @@ const char* typeName(const char* t) {
 }
 
 // Plane colour by altitude, like the big flight-tracking sites.
-static uint16_t altColor(const Plane& p) {
-  if (!p.hasAlt) return RGB(120, 120, 130);
+static uint16_t altColorFt(float a) {
   static const struct { float ft; uint8_t r, g, b; } stops[] = {
     {0, 226, 76, 40}, {2000, 242, 138, 30}, {6000, 232, 190, 30}, {12000, 110, 180, 56},
     {20000, 32, 160, 140}, {30000, 40, 112, 214}, {40000, 118, 66, 206}};
-  float a = p.alt;
   if (a <= stops[0].ft) return RGB(stops[0].r, stops[0].g, stops[0].b);
   for (int i = 1; i < 7; i++)
     if (a <= stops[i].ft) {
@@ -156,6 +154,7 @@ static uint16_t altColor(const Plane& p) {
     }
   return RGB(stops[6].r, stops[6].g, stops[6].b);
 }
+static uint16_t altColor(const Plane& p) { return p.hasAlt ? altColorFt(p.alt) : RGB(120, 120, 130); }
 
 // Same result as lroundf (halves away from zero), but much cheaper than the C
 // library's version on the ESP32. Only for values well inside the int range.
@@ -790,6 +789,43 @@ static void drawPlanes(Adafruit_GFX& g, AppState& s, int n) {
     }
 }
 
+// The selected plane's path since take-off, coloured by altitude like the planes. Without
+// a track history: a dashed line from the departure airport, if it is known.
+static void drawFlightPath(Adafruit_GFX& g, AppState& s) {
+  Plane* p = s.selected();
+  if (!p || strcmp(flightPath.hex, p->hex)) return;
+  float px = sx(p->x), py = sy(p->y);
+  auto onScreen = [](float ax, float ay, float bx, float by) {
+    return !((ax < -20 && bx < -20) || (ax > MAP_W + 20 && bx > MAP_W + 20) ||
+             (ay < -20 && by < -20) || (ay > H + 20 && by > H + 20));
+  };
+  if (flightPath.state == PATH_READY && flightPath.n >= 2) {
+    const PathPoint* pt = flightPath.pts;
+    float lx = sx(pt[0].x), ly = sy(pt[0].y);
+    for (int i = 1; i <= flightPath.n; i++) {
+      bool last = i == flightPath.n;               // the last piece ends at the plane itself
+      float x = last ? px : sx(pt[i].x), y = last ? py : sy(pt[i].y);
+      int alt100 = last ? (p->hasAlt ? p->alt / 100 : pt[i - 1].alt100) : pt[i].alt100;
+      if (onScreen(lx, ly, x, y) && fabsf(x - lx) + fabsf(y - ly) >= 1.5f) {
+        thickLine(g, lx, ly, x, y, 3, altColorFt((pt[i - 1].alt100 + alt100) * 50.0f));
+        lx = x; ly = y;
+      } else if (!onScreen(lx, ly, x, y)) {
+        lx = x; ly = y;
+      }
+    }
+    return;
+  }
+  Route* r = s.route(p->cs);
+  if (!r || r->state != ROUTE_KNOWN || !r->hasOrigin) return;
+  float ox = sx(mercX(r->fromLon)), oy = sy(mercY(r->fromLat));
+  float len = hypotf(px - ox, py - oy);
+  for (float t = 0; t < len; t += 12) {             // dashes: 7 px on, 5 px off
+    float a = t / len, b = fminf(t + 7, len) / len;
+    float ax = ox + (px - ox) * a, ay = oy + (py - oy) * a, bx = ox + (px - ox) * b, by = oy + (py - oy) * b;
+    if (onScreen(ax, ay, bx, by)) thickLine(g, ax, ay, bx, by, 2, C_TEXT2);
+  }
+}
+
 static void drawCoverage(Adafruit_GFX& g, AppState& s) {
   if (s.fetchRadiusNm < 250 || s.demo) return;
   double lat = latFromY(s.fetchCy);
@@ -1064,6 +1100,7 @@ void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm
     placeCard(s.selected());
     take(CARD_X - 4, 0, CARD_X + CARD_W + 4, CARD_Y + cardHeight() + 4);   // keep tags off the card
   }
+  drawFlightPath(g, s);                      // under the planes
   drawPlanes(g, s, n);
   drawCoverage(g, s);
   if (card) drawPhotoCard(g, nowMs);

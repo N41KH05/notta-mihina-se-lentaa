@@ -136,6 +136,7 @@ __attribute__((export_name("sim_frame"))) uint16_t* sim_frame(uint32_t ms, int h
   if (ms - lastPoll >= POLL_SECONDS * 1000) {   // demo: "fresh positions" every few seconds
     lastPoll = ms;
     demoStep(s, ms, hour * 60 + minute);
+    pathFollow(s);
     s.updatedEpoch = 1;
   }
   Plane* sel = s.selected();
@@ -150,6 +151,11 @@ __attribute__((export_name("sim_frame"))) uint16_t* sim_frame(uint32_t ms, int h
     photoAt = ms;
   }
   if (!sel && photo.hex[0]) { photo.hex[0] = 0; photo.state = PHOTO_NONE; }
+  if (sel && strcmp(flightPath.hex, sel->hex)) {        // a newly selected plane: its path
+    snprintf(flightPath.hex, sizeof flightPath.hex, "%s", sel->hex);
+    demoPath(s, *sel, flightPath);
+  }
+  if (!sel && flightPath.hex[0]) { flightPath.hex[0] = 0; flightPath.state = PATH_NONE; }
   if (photo.state == PHOTO_LOADING && ms - photoAt > 1200) {
     photo.pix = (uint16_t*)SIM_PHOTO;
     snprintf(photo.photographer, sizeof photo.photographer, "%s", TR("esimerkki (simulaattori)", "example (simulator)"));

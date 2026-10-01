@@ -10,6 +10,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <JPEGDEC.h>
+#include <miniz.h>                         // the ROM's inflater (for gzip'ed track histories)
 #include <ctype.h>
 #include <math.h>
 
@@ -179,7 +180,42 @@ bool routeParse(JsonDocument& doc, Route& r) {
     r.toLat = dlat.as<float>();
     r.toLon = dlon.as<float>();
   }
+  JsonVariant olat = route["origin"]["latitude"], olon = route["origin"]["longitude"];
+  if (olat.is<float>() && olon.is<float>()) {
+    r.hasOrigin = true;
+    r.fromLat = olat.as<float>();
+    r.fromLon = olon.as<float>();
+  }
   return true;
+}
+
+// Track history in tar1090's trace format (adsb.lol /data/traces/xx/trace_full_<hex>.json):
+// "trace": [[seconds, lat, lon, altitude or "ground", speed, track, flags, ...], ...].
+// Keeps the current flight only: from the last point on the ground, the last "new leg"
+// flag, or the last gap of over 30 minutes. Returns how many points went into out.
+void traceFilter(JsonDocument& filter) {
+  filter["trace"][0][0] = true;
+}
+int traceToPath(JsonDocument& doc, FlightPath& out) {
+  JsonArray tr = doc["trace"];
+  int n = tr.size(), start = 0;
+  float prevT = -1;
+  for (int i = 0; i < n; i++) {
+    JsonArray p = tr[i];
+    float t = p[0] | 0.0f;
+    if ((p[6] | 0) & 2) start = i;                     // flag: a new leg starts here
+    if (prevT >= 0 && t - prevT > 1800) start = i;     // long gap: a later flight
+    if (p[3].is<const char*>()) start = i;             // "ground": not airborne yet
+    prevT = t;
+  }
+  out.clear();
+  for (int i = start; i < n; i++) {
+    JsonArray p = tr[i];
+    if (!p[1].is<float>() || !p[2].is<float>()) continue;
+    int alt = p[3].is<int>() ? p[3].as<int>() : 0;
+    out.add(mercX(p[2].as<double>()), mercY(p[1].as<double>()), alt);
+  }
+  return out.n;
 }
 
 void nominatimFilter(JsonDocument& filter) {
@@ -322,6 +358,7 @@ void netFetchPlanes(AppState& s, void* lock) {
   s.fetchRadiusNm = radius;
   if (s.apiOk) {
     trafficMerge(s, incoming, n);
+    pathFollow(s);                         // the selected plane's path grows with it
     s.updatedEpoch = time(nullptr);
   }
   UNLOCK(lock);
@@ -522,33 +559,66 @@ void coverResize(const uint16_t* src, int w, int h, uint16_t* dst) {
   }
 }
 
-// Download a URL into a new PSRAM buffer. Returns its length, or 0 on failure.
-size_t download(const char* url, uint8_t** out) {
+// Download a URL into a new PSRAM buffer (at most maxLen bytes). Returns its length,
+// or 0 on failure. Works with or without a Content-Length.
+size_t download(const char* url, uint8_t** out, size_t maxLen, bool acceptGzip = false) {
   WiFiClientSecure client;
   client.useBuiltinCACertBundle();
   client.setHandshakeTimeout(15);
   HTTPClient http;
+  http.useHTTP10(true);                      // no chunked encoding: the body as it is
   http.setTimeout(12000);
   http.setUserAgent(photoUserAgent());
   if (!http.begin(client, url)) return 0;
+  if (acceptGzip) http.addHeader("Accept-Encoding", "gzip");
   politeWait();
   size_t got = 0;
   if (http.GET() == 200) {
-    int len = http.getSize();
-    if (len > 0 && len < 400000) {
-      uint8_t* buf = (uint8_t*)heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
-      WiFiClient* st = http.getStreamPtr();
-      uint32_t t0 = millis();
-      while (buf && (int)got < len && millis() - t0 < 15000) {
-        int n = st->readBytes(buf + got, len - got);
-        if (n > 0) got += n; else delay(5);
-      }
-      if ((int)got == len) *out = buf;
-      else { heap_caps_free(buf); got = 0; }
+    int len = http.getSize();                  // -1 if the server didn't say
+    size_t cap = len > 0 ? (size_t)len : maxLen;
+    uint8_t* buf = cap <= maxLen ? (uint8_t*)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM) : nullptr;
+    WiFiClient* st = http.getStreamPtr();
+    uint32_t t0 = millis();
+    while (buf && got < cap && millis() - t0 < 20000) {
+      int n = st->readBytes(buf + got, cap - got);
+      if (n > 0) got += n;
+      else if (len <= 0 && !st->connected() && !st->available()) break;   // end of the body
+      else delay(5);
     }
+    if (got && (len <= 0 || got == (size_t)len)) *out = buf;
+    else { heap_caps_free(buf); got = 0; }
   }
   http.end();
   return got;
+}
+
+// gzip -> plain bytes in a new PSRAM buffer, using the inflater in the ESP32's ROM.
+size_t gunzip(const uint8_t* in, size_t n, uint8_t** out, size_t maxOut) {
+  if (n < 18 || in[0] != 0x1f || in[1] != 0x8b || in[2] != 8) return 0;
+  size_t pos = 10;
+  uint8_t flg = in[3];
+  if (flg & 4) pos += 2 + (in[pos] | in[pos + 1] << 8);          // extra field
+  if (flg & 8) while (pos < n && in[pos++]) {}                    // file name
+  if (flg & 16) while (pos < n && in[pos++]) {}                   // comment
+  if (flg & 2) pos += 2;                                          // header CRC
+  if (pos >= n) return 0;
+  size_t size = in[n - 4] | in[n - 3] << 8 | in[n - 2] << 16 | (size_t)in[n - 1] << 24;   // (mod 2^32)
+  if (!size || size > maxOut) return 0;
+  uint8_t* buf = (uint8_t*)heap_caps_malloc(size + 1, MALLOC_CAP_SPIRAM);
+  tinfl_decompressor* d = (tinfl_decompressor*)heap_caps_malloc(sizeof(tinfl_decompressor), MALLOC_CAP_SPIRAM);
+  size_t inLen = n - pos - 8, outLen = size;
+  bool ok = buf && d;
+  if (ok) {
+    tinfl_init(d);
+    tinfl_status st = tinfl_decompress(d, in + pos, &inLen, buf, buf, &outLen,
+                                       TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    ok = st == TINFL_STATUS_DONE && outLen == size;
+  }
+  heap_caps_free(d);
+  if (!ok) { heap_caps_free(buf); return 0; }
+  buf[size] = 0;
+  *out = buf;
+  return size;
 }
 }  // namespace
 
@@ -599,7 +669,7 @@ void netFetchPhoto(void* lock) {
   // 2. Download and decode the picture (baseline JPEG), then scale it to the card.
   bool ok = false;
   uint8_t* jpg = nullptr;
-  size_t len = src[0] ? download(src, &jpg) : 0;
+  size_t len = src[0] ? download(src, &jpg, 400000) : 0;
   if (len) {
     JPEGDEC jpeg;
     if (jpeg.openRAM(jpg, len, jpegDraw)) {
@@ -635,4 +705,57 @@ void netFetchPhoto(void* lock) {
   }
   UNLOCK(lock);
   Serial.printf("Photo for %s: %s\n", hex, ok ? "shown" : found ? "could not be shown" : "none");
+}
+
+// ---------------------------------------------------------------------------
+//  The selected plane's flight path so far: its track history from adsb.lol
+//  (open data, ODbL). If that isn't available the map shows a dashed line from
+//  the departure airport instead.
+// ---------------------------------------------------------------------------
+void netFetchPath(void* lock) {
+  char hex[8];
+  LOCK(lock);
+  bool want = flightPath.state == PATH_LOADING;
+  snprintf(hex, sizeof hex, "%s", flightPath.hex);
+  UNLOCK(lock);
+  if (!want || !urlSafe(hex) || strlen(hex) < 2) return;
+  for (char* c = hex; *c; c++) *c = tolower((uint8_t)*c);
+
+  static FlightPath* tmp = (FlightPath*)heap_caps_malloc(sizeof(FlightPath), MALLOC_CAP_SPIRAM);
+  char url[96];
+  snprintf(url, sizeof url, "https://adsb.lol/data/traces/%s/trace_full_%s.json", hex + strlen(hex) - 2, hex);
+  uint8_t* raw = nullptr;
+  size_t len = download(url, &raw, 1500000, true);
+  int n = 0;
+  if (len && tmp) {
+    uint8_t* json = raw;
+    size_t jlen = len;
+    uint8_t* plain = nullptr;
+    if (raw[0] == 0x1f && raw[1] == 0x8b) {        // gzip'ed: unpack it first
+      jlen = gunzip(raw, len, &plain, 4000000);
+      json = plain;
+    }
+    if (json && jlen) {
+      JsonDocument filter;
+      traceFilter(filter);
+      JsonDocument doc(&psram);
+      if (!deserializeJson(doc, (const char*)json, jlen, DeserializationOption::Filter(filter)))
+        n = traceToPath(doc, *tmp);
+    }
+    heap_caps_free(plain);
+  }
+  heap_caps_free(raw);
+
+  LOCK(lock);
+  if (!strcasecmp(flightPath.hex, hex) && flightPath.state == PATH_LOADING) {
+    if (n >= 2) {
+      memcpy(flightPath.pts, tmp->pts, sizeof(PathPoint) * n);
+      flightPath.n = n;
+      flightPath.state = PATH_READY;
+    } else {
+      flightPath.state = PATH_MISSING;
+    }
+  }
+  UNLOCK(lock);
+  Serial.printf("Flight path for %s: %d points\n", hex, n);
 }

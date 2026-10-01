@@ -63,12 +63,14 @@ void fetchLoop(void*) {
       struct tm lt;
       localtime_r(&t, &lt);
       demoStep(state, millis(), lt.tm_hour * 60 + lt.tm_min);
+      pathFollow(state);
       state.updatedEpoch = time(nullptr);
       xSemaphoreGive(lock);
     } else if (WiFi.status() == WL_CONNECTED) {
       netLookupRoute(state, lock);        // quick things for the selected plane first
       netLookupTimes(state, lock);
       if (cfg.photos) netFetchPhoto(lock);
+      netFetchPath(lock);
       netFetchPlanes(state, lock);
     }
   }
@@ -682,6 +684,14 @@ void loop() {
     xTaskNotifyGive(fetchTask);
   }
   if (!sel && photo.hex[0]) { photo.hex[0] = 0; photo.state = PHOTO_NONE; }
+  // A newly selected plane: its flight path (fetched for live planes, made up for demo ones).
+  if (sel && strcmp(flightPath.hex, sel->hex)) {
+    snprintf(flightPath.hex, sizeof flightPath.hex, "%s", sel->hex);
+    flightPath.clear();
+    if (state.demo) demoPath(state, *sel, flightPath);
+    else { flightPath.state = PATH_LOADING; xTaskNotifyGive(fetchTask); }
+  }
+  if (!sel && flightPath.hex[0]) { flightPath.hex[0] = 0; flightPath.state = PATH_NONE; }
   if (state.follow && sel) {
     state.advance(millis());
     state.cx = sel->x;

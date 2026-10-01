@@ -78,6 +78,8 @@ struct Route {
   char flight[10], airline[40], from[5], fromCity[24], to[5], toCity[24];
   bool hasDest;              // destination airport position known (for the arrival estimate)
   float toLat, toLon;
+  bool hasOrigin;            // departure airport position known (flight path fallback)
+  float fromLat, fromLon;
   // Schedule from AirLabs, as local minutes past midnight (-1 = not known)
   TimesState times;
   bool hasTimes;             // the times below are filled in (kept while being refreshed)
@@ -216,3 +218,39 @@ struct PhotoCard {
   char link[160];          // the photo's page (Planespotters asks for a link: shown as a QR code)
 };
 inline PhotoCard photo;
+
+// ============================================================================
+//  Flight path of the selected plane
+// ============================================================================
+// Where the selected plane has flown since it took off. Live: its track history from
+// adsb.lol (net.cpp), then extended with each new position report. Demo: made up.
+enum PathState : uint8_t { PATH_NONE, PATH_LOADING, PATH_READY, PATH_MISSING };
+static const int PATH_POINTS = 400;
+struct PathPoint { float x, y; int16_t alt100; };      // mercator metres; altitude / 100 ft
+struct FlightPath {
+  char hex[8];               // which plane this is for
+  PathState state;
+  int n;
+  PathPoint pts[PATH_POINTS];
+
+  void clear() { n = 0; }
+  // Add a point (skipped if closer than ~300 m to the last one). When full, every
+  // second point is dropped, so the whole flight always fits.
+  void add(float x, float y, int altFt) {
+    if (n && fabsf(x - pts[n - 1].x) + fabsf(y - pts[n - 1].y) < 300) return;
+    if (n == PATH_POINTS) {
+      int k = 0;
+      for (int i = 0; i < n; i += 2) pts[k++] = pts[i];
+      n = k;
+    }
+    pts[n++] = {x, y, (int16_t)(altFt / 100)};
+  }
+};
+inline FlightPath flightPath;
+
+// After new positions arrive: extend the selected plane's path to where it was reported.
+// Call with the state locked.
+inline void pathFollow(AppState& s) {
+  if (flightPath.state != PATH_READY) return;
+  if (Plane* p = s.find(flightPath.hex)) flightPath.add(p->fx, p->fy, p->hasAlt ? p->alt : 0);
+}
