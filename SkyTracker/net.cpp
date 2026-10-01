@@ -61,7 +61,7 @@ void trafficFilter(JsonDocument& filter) {
   for (const char* key : {"ac", "aircraft"}) {
     JsonObject f = filter[key][0].to<JsonObject>();
     for (const char* k : {"hex", "flight", "r", "t", "alt_baro", "baro_rate", "gs", "track",
-                          "lat", "lon", "seen_pos", "squawk"})
+                          "lat", "lon", "seen_pos", "squawk", "category"})
       f[k] = true;
   }
 }
@@ -82,6 +82,7 @@ int trafficParse(JsonDocument& doc, Plane* out, uint32_t now) {
     copyStr(p.reg, sizeof p.reg, a["r"] | "");
     copyStr(p.type, sizeof p.type, a["t"] | "");
     copyStr(p.squawk, sizeof p.squawk, a["squawk"] | "");
+    copyStr(p.category, sizeof p.category, a["category"] | "");
     p.lat = a["lat"].as<double>();
     p.lon = a["lon"].as<double>();
     p.fx = p.x = mercX(p.lon);

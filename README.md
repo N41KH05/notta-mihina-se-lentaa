@@ -4,7 +4,7 @@ A desk display that shows the planes flying around you. It runs on a Waveshare E
 
 The name is Finnish, roughly "so, where's that one flying to?". The screen is in English by default and can be switched to Finnish.
 
-You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html?v=12) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
+You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html?v=13) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
 
 <p align="center"><img src="docs/img/hero.png" width="720" alt="The display with a selected flight from Stockholm to Oulu"></p>
 
@@ -15,7 +15,7 @@ You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa
 
 ## What it does
 
-- Planes around home on a map with coastlines, lakes, towns and airports. Positions update every 4 seconds and the planes move smoothly in between. Colour shows altitude.
+- Planes around home on a map with coastlines, lakes, towns and airports. Positions update every 4 seconds and the planes move smoothly in between. Colour shows altitude, and the icon shows the kind of aircraft: airliner, wide-body, business jet, propeller plane, light aircraft, helicopter or glider.
 - Tap a plane for its route (e.g. ARN → OUL), estimated arrival, altitude, climb rate, speed, heading, distance and aircraft type. The map draws the path it has flown since take-off, coloured by altitude.
 - Aircraft photos from Planespotters.net, with the photographer's name and a QR code to the photo page.
 - Wi-Fi and home location are set up on the touchscreen. Home can be found by address search.

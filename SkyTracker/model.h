@@ -40,6 +40,7 @@ inline float metresPerPx(float zoom) { return 2 * WORLD_M / (256.0f * powf(2.0f,
 
 struct Plane {
   char hex[8], cs[10], reg[12], type[6], squawk[6];
+  char category[3];      // ADS-B emitter category: A1 light ... A5 heavy, A7 helicopter, B1 glider
   double lat, lon;
   float fx, fy;          // last reported position (mercator metres)
   float x, y;            // position shown now (moved along its track since the report)

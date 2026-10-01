@@ -398,13 +398,96 @@ static bool planeTag(Adafruit_GFX& g, float x, float y, const char* l1, const Fn
 // ---------------------------------------------------------------------------
 static float homeX, homeY;
 
-static void planeShape(Adafruit_GFX& g, float x, float y, float heading, float size, uint16_t c) {
-  static const float tris[][6] = {
-    {-0.13f, -1.0f, 0.13f, -1.0f, 0.13f, 0.88f}, {-0.13f, -1.0f, 0.13f, 0.88f, -0.13f, 0.88f},
-    {0.0f, -0.38f, -1.0f, 0.30f, 1.0f, 0.30f}, {0.0f, 0.52f, -0.42f, 0.97f, 0.42f, 0.97f},
-  };
+// Plane icons: what kind of aircraft it is, from its ICAO type code (A320, AT76, EC35...)
+// or, failing that, the size category its transponder sends.
+enum IconKind : uint8_t { ICON_JET, ICON_WIDE, ICON_BIZJET, ICON_PROP, ICON_LIGHT, ICON_HELI, ICON_GLIDER };
+static bool typeIn(const char* t, const char* const* list) {
+  for (; *list; list++)
+    if (!strncmp(t, *list, strlen(*list))) return true;
+  return false;
+}
+static IconKind iconKind(const Plane& p) {
+  static const char* const HELI[] = {"EC", "AS3", "AS5", "AS6", "A10", "A11", "A13", "A16", "A18", "B06", "B40",
+    "B41", "B42", "B50", "B21", "R22", "R44", "R66", "S76", "S92", "S61", "H16", "H50", "MI8", "MI17", "NH90",
+    "H60", "UH60", "H47", "MD52", "MD60", "EXPL", "GAZL", "LYNX", "PUMA", "KA32", "TIGR", "BK17", "AW", nullptr};
+  static const char* const GLIDER[] = {"GLID", "ASK", "ASW", "ARCP", "DUO", "NIMB", "VENT", nullptr};
+  static const char* const PROP[] = {"AT4", "AT5", "AT7", "ATP", "DH8", "DHC", "SF34", "SB20", "JS3", "JS4", "D328",
+    "F50", "F27", "E120", "B190", "BE20", "BE30", "B350", "BE9", "PC12", "PC6", "C208", "C212", "AN2", "AN3",
+    "L410", "D228", "SW4", "MA60", "Y12", "P180", "C130", "C30J", "CN35", "C295", "A400", "TBM", "BN2", "PA31",
+    "PA34", "C340", "C40", "C41", "C421", "BE55", "BE58", "DA42", "DA62", "AC6", "AC9", "P68", "SC7", nullptr};
+  static const char* const LIGHT[] = {"C15", "C170", "C172", "C175", "C177", "C18", "C20", "C21", "PA", "P28", "P32", "SR2", "DA20", "DA40",
+    "BE33", "BE35", "BE36", "M20", "RV", "TOBA", "TB", "AA5", "C42", "CTSW", "DR40", "DV20", "G115", "EV97", "PIVI",
+    "WT9", "ULAC", "Z42", "Z43", "Z24", "SIRA", "S22T", nullptr};
+  static const char* const BIZJET[] = {"C25", "C50", "C51", "C52", "C55", "C56", "C65", "C68", "C70", "C75", "CL30",
+    "CL35", "CL60", "GLF", "GL5", "GL6", "GL7", "GLEX", "E50P", "E55P", "E35L", "E545", "E550", "LJ", "F2TH",
+    "F900", "FA", "PC24", "HDJT", "H25", "BE40", "PRM1", "SF50", "G150", "G280", "ASTR", "GALX", "EA50", nullptr};
+  static const char* const WIDE[] = {"A30", "A31", "A33", "A34", "A35", "A38", "B74", "B76", "B77", "B78", "IL96",
+    "IL86", "MD11", "DC10", "L101", "A3ST", "BLCF", "C17", "C5", "A124", "A225", nullptr};
+  const char* t = p.type;
+  if (t[0]) {
+    if (typeIn(t, HELI)) return ICON_HELI;
+    if (typeIn(t, GLIDER)) return ICON_GLIDER;
+    if (typeIn(t, PROP)) return ICON_PROP;
+    if (typeIn(t, LIGHT)) return ICON_LIGHT;
+    if (typeIn(t, BIZJET)) return ICON_BIZJET;
+    if (typeIn(t, WIDE)) return ICON_WIDE;
+  }
+  const char* c = p.category;                         // ADS-B emitter category
+  if (!strcmp(c, "A7")) return ICON_HELI;
+  if (!strcmp(c, "B1")) return ICON_GLIDER;
+  if (!strcmp(c, "A1") || c[0] == 'B' || c[0] == 'C') return ICON_LIGHT;
+  if (!strcmp(c, "A2")) return ICON_BIZJET;
+  if (!strcmp(c, "A5")) return ICON_WIDE;
+  return ICON_JET;
+}
+// Relative size of each kind (a jumbo is drawn bigger still).
+static float iconScale(const Plane& p, IconKind k) {
+  static const float S[] = {1.0f, 1.25f, 0.82f, 0.9f, 0.7f, 0.85f, 0.95f};
+  if (k == ICON_WIDE && (!strncmp(p.type, "A38", 3) || !strncmp(p.type, "B74", 3))) return 1.4f;
+  return S[k];
+}
+
+// Each icon is a few triangles in a unit box: nose at y = -1, tail at y = +1.
+struct Tri { float v[6]; };
+static const Tri SHAPE_JET[] = {
+  {{-0.13f, -1.0f, 0.13f, -1.0f, 0.13f, 0.88f}}, {{-0.13f, -1.0f, 0.13f, 0.88f, -0.13f, 0.88f}},
+  {{0.0f, -0.38f, -1.0f, 0.30f, 1.0f, 0.30f}}, {{0.0f, 0.52f, -0.42f, 0.97f, 0.42f, 0.97f}}};
+static const Tri SHAPE_WIDE[] = {
+  {{-0.17f, -1.0f, 0.17f, -1.0f, 0.17f, 0.9f}}, {{-0.17f, -1.0f, 0.17f, 0.9f, -0.17f, 0.9f}},
+  {{0.0f, -0.45f, -1.0f, 0.32f, 1.0f, 0.32f}}, {{0.0f, 0.5f, -0.46f, 0.98f, 0.46f, 0.98f}}};
+static const Tri SHAPE_BIZJET[] = {
+  {{-0.11f, -1.0f, 0.11f, -1.0f, 0.11f, 0.9f}}, {{-0.11f, -1.0f, 0.11f, 0.9f, -0.11f, 0.9f}},
+  {{0.0f, -0.12f, -0.82f, 0.32f, 0.82f, 0.32f}}, {{0.0f, 0.6f, -0.4f, 0.98f, 0.4f, 0.98f}}};
+static const Tri SHAPE_PROP[] = {
+  {{-0.12f, -1.0f, 0.12f, -1.0f, 0.12f, 0.9f}}, {{-0.12f, -1.0f, 0.12f, 0.9f, -0.12f, 0.9f}},
+  {{-1.0f, -0.4f, 1.0f, -0.4f, 1.0f, -0.18f}}, {{-1.0f, -0.4f, 1.0f, -0.18f, -1.0f, -0.18f}},
+  {{-0.4f, 0.72f, 0.4f, 0.72f, 0.4f, 0.92f}}, {{-0.4f, 0.72f, 0.4f, 0.92f, -0.4f, 0.92f}}};
+static const Tri SHAPE_LIGHT[] = {
+  {{-0.13f, -1.0f, 0.13f, -1.0f, 0.1f, 0.9f}}, {{-0.13f, -1.0f, 0.1f, 0.9f, -0.1f, 0.9f}},
+  {{-1.0f, -0.5f, 1.0f, -0.5f, 1.0f, -0.24f}}, {{-1.0f, -0.5f, 1.0f, -0.24f, -1.0f, -0.24f}},
+  {{-0.38f, 0.72f, 0.38f, 0.72f, 0.38f, 0.94f}}, {{-0.38f, 0.72f, 0.38f, 0.94f, -0.38f, 0.94f}}};
+static const Tri SHAPE_GLIDER[] = {
+  {{-0.08f, -1.0f, 0.08f, -1.0f, 0.06f, 0.95f}}, {{-0.08f, -1.0f, 0.06f, 0.95f, -0.06f, 0.95f}},
+  {{-1.25f, -0.36f, 1.25f, -0.36f, 1.25f, -0.24f}}, {{-1.25f, -0.36f, 1.25f, -0.24f, -1.25f, -0.24f}},
+  {{-0.32f, 0.84f, 0.32f, 0.84f, 0.32f, 0.96f}}, {{-0.32f, 0.84f, 0.32f, 0.96f, -0.32f, 0.96f}}};
+static const Tri SHAPE_HELI[] = {                    // cabin, tail boom, tail rotor, main rotor
+  {{-0.32f, -0.6f, 0.32f, -0.6f, 0.32f, 0.2f}}, {{-0.32f, -0.6f, 0.32f, 0.2f, -0.32f, 0.2f}},
+  {{-0.32f, -0.6f, 0.32f, -0.6f, 0.0f, -0.9f}}, {{-0.32f, 0.2f, 0.32f, 0.2f, 0.0f, 0.4f}},
+  {{-0.07f, 0.2f, 0.07f, 0.2f, 0.07f, 0.98f}}, {{-0.07f, 0.2f, 0.07f, 0.98f, -0.07f, 0.98f}},
+  {{-0.26f, 0.82f, 0.26f, 0.82f, 0.26f, 0.96f}}, {{-0.26f, 0.82f, 0.26f, 0.96f, -0.26f, 0.96f}},
+  {{0.654f, 0.760f, 0.760f, 0.654f, -0.654f, -0.760f}}, {{0.654f, 0.760f, -0.654f, -0.760f, -0.760f, -0.654f}}, {{0.760f, -0.654f, 0.654f, -0.760f, -0.760f, 0.654f}}, {{0.760f, -0.654f, -0.760f, 0.654f, -0.654f, 0.760f}}};
+struct Shape { const Tri* tris; int n; };
+#define SHAPE(a) {a, sizeof a / sizeof a[0]}
+static const Shape SHAPES[] = {SHAPE(SHAPE_JET), SHAPE(SHAPE_WIDE), SHAPE(SHAPE_BIZJET), SHAPE(SHAPE_PROP),
+                               SHAPE(SHAPE_LIGHT), SHAPE(SHAPE_HELI), SHAPE(SHAPE_GLIDER)};
+#undef SHAPE
+
+static void planeShape(Adafruit_GFX& g, float x, float y, float heading, float size, uint16_t c,
+                       IconKind kind = ICON_JET) {
   float a = heading * 0.0174533f, sn = sinf(a), cs = cosf(a);
-  for (auto& t : tris) {
+  const Shape& sh = SHAPES[kind];
+  for (int k = 0; k < sh.n; k++) {
+    const float* t = sh.tris[k].v;
     int p[6];
     for (int i = 0; i < 3; i++) {
       float px = t[i * 2] * size, py = t[i * 2 + 1] * size;
@@ -764,8 +847,10 @@ static void drawPlanes(Adafruit_GFX& g, AppState& s, int n) {
         g.fillCircle(rnd(x), rnd(y), rnd(sz + 9), RGB(255, 236, 242));
         ring(g, rnd(x), rnd(y), rnd(sz + 8), 2, C_ACCENT);
       }
-      planeShape(g, x, y, hd, sz + 2, p.emergency() ? C_EMERG : C_OUTLINE);
-      planeShape(g, x, y, hd, sz, p.emergency() ? RGB(255, 200, 200) : altColor(p));
+      IconKind kind = iconKind(p);
+      float ks = sz * iconScale(p, kind);
+      planeShape(g, x, y, hd, ks + 2, p.emergency() ? C_EMERG : C_OUTLINE, kind);
+      planeShape(g, x, y, hd, ks, p.emergency() ? RGB(255, 200, 200) : altColor(p), kind);
       take(x - size, y - size, x + size, y + size);
     }
   bool crowded = n > 25 && V_ZOOM < 8;

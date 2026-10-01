@@ -47,7 +47,7 @@ Once it's connected it asks **Where is home?** Home is the centre of the map and
 - Tap a plane, on the map or in the list, to see its details. **FOLLOW** keeps it centred; **CLOSE** or a tap on empty map goes back to the list.
 - The selected plane's path since take-off is drawn on the map, coloured by altitude, and keeps growing as it flies. It comes from adsb.lol's track history. If that isn't available, a dashed line from the departure airport is shown instead.
 - The gear in the bottom left opens Settings: Wi-Fi, units, language, home, demo mode and the data status.
-- Colours show altitude: red and orange are low, green is in between, blue and purple are at cruising height.
+- Colours show altitude: red and orange are low, green is in between, blue and purple are at cruising height. The icon shows the kind of aircraft (airliner, wide-body, business jet, propeller plane, light aircraft, helicopter, glider), worked out from its type code or, failing that, the size class its transponder sends. Bigger aircraft get bigger icons.
 - After 5 minutes without a touch it goes back to the home view.
 - At night (23–07 unless you change it) the screen turns off, since the backlight can't be dimmed. A tap wakes it.
 - The position services return planes within 250 nm of a point. Zoom out further and you'll see a dotted circle marking that limit.

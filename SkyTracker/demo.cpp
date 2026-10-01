@@ -78,6 +78,33 @@ void demoInit(AppState& s, uint32_t nowMs) {
     r.fromLat = DEMO_AIRPORTS[a].lat;
     r.fromLon = DEMO_AIRPORTS[a].lon;
   }
+  // A few smaller aircraft close to home: a rescue helicopter, a Cessna and a business jet.
+  static const struct { const char *cs, *reg, *type, *cat; int alt; float gs, km, deg; } extra[] = {
+    {"FHX10", "OH-HMS", "EC35", "A7", 1200, 120, 9, 40},
+    {"OHCDA", "OH-CDA", "C172", "A1", 2500, 105, 16, 250},
+    {"NJE24K", "CS-PHB", "C68A", "A2", 41000, 470, 70, 150}};
+  for (const auto& e : extra) {
+    if (s.nPlanes >= MAX_PLANES) break;
+    Plane& p = s.planes[s.nPlanes++];
+    memset(&p, 0, sizeof p);
+    snprintf(p.hex, sizeof p.hex, "%06x", 0x461000 + s.nPlanes);
+    snprintf(p.cs, sizeof p.cs, "%s", e.cs);
+    snprintf(p.reg, sizeof p.reg, "%s", e.reg);
+    snprintf(p.type, sizeof p.type, "%s", e.type);
+    snprintf(p.category, sizeof p.category, "%s", e.cat);
+    snprintf(p.squawk, sizeof p.squawk, "7000");
+    float a = e.deg * 0.0174533f, d = e.km * 2000;
+    p.fx = p.x = hx + sinf(a) * d;
+    p.fy = p.y = hy + cosf(a) * d;
+    p.lat = latFromY(p.fy);
+    p.lon = lonFromX(p.fx);
+    p.track = fmodf(e.deg + 100, 360);
+    p.gs = e.gs;
+    p.alt = e.alt;
+    p.hasAlt = p.hasGs = p.hasTrack = p.hasVrate = true;
+    p.tMs = nowMs;
+    p.addTrail(p.fx, p.fy);
+  }
   s.demo = true;
   s.apiOk = true;
   snprintf(s.source, sizeof s.source, "demo");
