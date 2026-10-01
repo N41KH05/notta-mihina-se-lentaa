@@ -10,11 +10,21 @@
 #define RGB(r, g, b) (uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
 namespace {
 
-const uint16_t C_BG = RGB(238, 241, 246), C_CARD = 0xFFFF, C_NAVY = RGB(22, 36, 66),
-               C_TEXT = RGB(28, 32, 44), C_TEXT2 = RGB(104, 110, 124), C_LINE = RGB(214, 218, 226),
-               C_EDGE = RGB(170, 178, 194), C_ACCENT = RGB(226, 58, 94), C_GOOD = RGB(34, 160, 90),
-               C_BAD = RGB(214, 30, 30), C_KEY = 0xFFFF, C_KEY_DARK = RGB(206, 212, 224),
-               C_WHITE = 0xFFFF, C_SOFT = RGB(200, 210, 230);
+// Colours come from the current theme (render.h).
+#define C_BG       (theme->background)
+#define C_CARD     (theme->surface)
+#define C_KEY      (theme->surface)
+#define C_KEY_DARK (theme->keyDark)
+#define C_BAR      (theme->bar)
+#define C_ON_BAR   (theme->onBar)
+#define C_SOFT     (theme->onBarSoft)
+#define C_PRIMARY  (theme->primary)
+#define C_TEXT     (theme->ink)
+#define C_TEXT2    (theme->ink2)
+#define C_LINE     (theme->line)
+#define C_EDGE     (theme->edge)
+#define C_ACCENT   (theme->accent)
+const uint16_t C_GOOD = RGB(34, 160, 90), C_BAD = RGB(214, 30, 30), C_WHITE = 0xFFFF;
 const int W = SCREEN_W, H = SCREEN_H;
 
 // ---- text ------------------------------------------------------------------------
@@ -33,29 +43,29 @@ void fitCopy(char* dst, size_t n, const char* src, const Fnt& fn, int maxW) {
 struct Rect { int16_t x, y, w, h; bool hit(int px, int py) const { return px >= x && px < x + w && py >= y && py < y + h; } };
 
 void button(Adafruit_GFX& g, const Rect& r, const char* label, bool primary, const Fnt& f = B16) {
-  g.fillRoundRect(r.x, r.y, r.w, r.h, 8, primary ? C_NAVY : C_CARD);
-  g.drawRoundRect(r.x, r.y, r.w, r.h, 8, primary ? C_NAVY : C_EDGE);
-  textC(g, r.x + r.w / 2, r.y + (r.h - f.size) / 2 - 1, label, f, primary ? C_WHITE : C_NAVY);
+  g.fillRoundRect(r.x, r.y, r.w, r.h, 8, primary ? C_BAR : C_CARD);
+  g.drawRoundRect(r.x, r.y, r.w, r.h, 8, primary ? C_PRIMARY : C_EDGE);
+  textC(g, r.x + r.w / 2, r.y + (r.h - f.size) / 2 - 1, label, f, primary ? C_ON_BAR : C_PRIMARY);
 }
 const Rect BACK = {12, 9, 138, 40};
 const Rect SKIP = {W - 142, 9, 130, 40}, SET_HOME = {W - 182, 9, 170, 40};
 void header(Adafruit_GFX& g, const char* title, bool back, const char* right = nullptr, const Rect* rightR = nullptr) {
-  g.fillRect(0, 0, W, 58, C_NAVY);
+  g.fillRect(0, 0, W, 58, C_BAR);
   int tx = 24;
   if (back) {
     g.drawRoundRect(BACK.x, BACK.y, BACK.w, BACK.h, 8, C_SOFT);
     int cx = BACK.x + 22, cy = BACK.y + BACK.h / 2;
     for (int i = 0; i < 3; i++) {                   // chevron
-      g.drawLine(cx + 6 + i, cy - 8, cx - 2 + i, cy, C_WHITE);
-      g.drawLine(cx - 2 + i, cy, cx + 6 + i, cy + 8, C_WHITE);
+      g.drawLine(cx + 6 + i, cy - 8, cx - 2 + i, cy, C_ON_BAR);
+      g.drawLine(cx - 2 + i, cy, cx + 6 + i, cy + 8, C_ON_BAR);
     }
-    text(g, BACK.x + 40, BACK.y + 11, TR("Takaisin", "Back"), B16, C_WHITE);
+    text(g, BACK.x + 40, BACK.y + 11, TR("Takaisin", "Back"), B16, C_ON_BAR);
     tx = BACK.x + BACK.w + 20;
   }
-  text(g, tx, 17, title, B22, C_WHITE);
+  text(g, tx, 17, title, B22, C_ON_BAR);
   if (right && rightR) {
     g.drawRoundRect(rightR->x, rightR->y, rightR->w, rightR->h, 8, C_SOFT);
-    textC(g, rightR->x + rightR->w / 2, rightR->y + 11, right, B16, C_WHITE);
+    textC(g, rightR->x + rightR->w / 2, rightR->y + 11, right, B16, C_ON_BAR);
   }
 }
 void card(Adafruit_GFX& g, int x, int y, int w, int h, const char* label) {
@@ -113,39 +123,47 @@ int connectResult = 0;          // 0 trying, 1 ok, -1 failed
 // ---- screens: settings ----------------------------------------------------------------
 const Rect SET_CHANGE = {44, 156, 230, 44}, SET_FORGET = {290, 156, 210, 44}, SET_DEMO = {516, 156, 240, 44};
 
-// Units and language: four two-way switches.
-const int N_SWITCHES = 4;
+// Units, language and dark mode: a row of switches, each with two or three options.
+const int N_SWITCHES = 5;
 const char* switchLabel(int i) {
   switch (i) {
     case 0: return TR("ETÄISYYS", "DISTANCE");
     case 1: return TR("NOPEUS", "SPEED");
     case 2: return TR("KORKEUS", "ALTITUDE");
-    default: return "KIELI / LANGUAGE";
+    case 3: return "KIELI / LANGUAGE";
+    default: return TR("TUMMA TILA", "DARK MODE");
   }
 }
-const char* switchText(int i, bool a) {
-  static const char* t[N_SWITCHES][2] = {{"km", "nm"}, {"km/h", "kt"}, {"ft", "m"}, {"Suomi", "English"}};
-  return t[i][a ? 0 : 1];
+int switchOptions(int i) { return i == 4 ? 3 : 2; }
+const char* switchText(int i, int opt) {
+  static const char* t[4][2] = {{"km", "nm"}, {"km/h", "kt"}, {"ft", "m"}, {"Suomi", "English"}};
+  if (i < 4) return t[i][opt];
+  return opt == 0 ? TR("Ei", "Off") : opt == 1 ? TR("Kyllä", "On") : TR("Ilta", "Auto");
 }
-const int UNIT_Y = 262, UNIT_H = 42, UNIT_W = 169, UNIT_X0 = 44, UNIT_GAP = 12;
-Rect unitHalf(int i, int half) {
-  int x = UNIT_X0 + i * (UNIT_W + UNIT_GAP);
-  return {(int16_t)(x + half * UNIT_W / 2), UNIT_Y, (int16_t)(UNIT_W / 2), UNIT_H};
+const int UNIT_Y = 262, UNIT_H = 42, UNIT_X0 = 44, UNIT_GAP = 12;
+const int16_t UNIT_W[N_SWITCHES] = {112, 124, 100, 160, 168};
+Rect unitPart(int i, int opt) {
+  int x = UNIT_X0;
+  for (int k = 0; k < i; k++) x += UNIT_W[k] + UNIT_GAP;
+  int n = switchOptions(i), w = UNIT_W[i] / n;
+  return {(int16_t)(x + opt * w), UNIT_Y, (int16_t)(opt == n - 1 ? UNIT_W[i] - opt * w : w), UNIT_H};
 }
-bool unitIsA(int i) {
+int unitGet(int i) {
   switch (i) {
-    case 0: return units.distKm;
-    case 1: return units.speedKmh;
-    case 2: return !units.altM;
-    default: return language == LANG_FI;
+    case 0: return units.distKm ? 0 : 1;
+    case 1: return units.speedKmh ? 0 : 1;
+    case 2: return units.altM ? 1 : 0;
+    case 3: return language == LANG_FI ? 0 : 1;
+    default: return cfg.darkMode == DARK_ON ? 1 : cfg.darkMode == DARK_AUTO ? 2 : 0;
   }
 }
-void unitSet(int i, bool a) {
+void unitSet(int i, int opt) {
   switch (i) {
-    case 0: units.distKm = a; break;
-    case 1: units.speedKmh = a; break;
-    case 2: units.altM = !a; break;
-    default: language = a ? LANG_FI : LANG_EN; break;
+    case 0: units.distKm = opt == 0; break;
+    case 1: units.speedKmh = opt == 0; break;
+    case 2: units.altM = opt == 1; break;
+    case 3: language = opt == 0 ? LANG_FI : LANG_EN; break;
+    default: cfg.darkMode = opt == 1 ? DARK_ON : opt == 2 ? DARK_AUTO : DARK_OFF; break;
   }
 }
 
@@ -177,14 +195,15 @@ void drawSettings(Adafruit_GFX& g, AppState& s) {
   // Units
   card(g, 24, 228, 752, 90, "");                         // each switch has its own label
   for (int i = 0; i < N_SWITCHES; i++) {
-    int x = UNIT_X0 + i * (UNIT_W + UNIT_GAP);
-    text(g, x, 242, switchLabel(i), R12, C_TEXT2);
-    g.drawRoundRect(x, UNIT_Y, UNIT_W, UNIT_H, 8, C_EDGE);
-    for (int half = 0; half < 2; half++) {
-      Rect r = unitHalf(i, half);
-      bool on = unitIsA(i) == (half == 0);
-      if (on) g.fillRoundRect(r.x, r.y, r.w, r.h, 8, C_NAVY);
-      textC(g, r.x + r.w / 2, r.y + 12, switchText(i, half == 0), B16, on ? C_WHITE : C_NAVY);
+    Rect all = unitPart(i, 0);
+    text(g, all.x, 242, switchLabel(i), R12, C_TEXT2);
+    g.drawRoundRect(all.x, UNIT_Y, UNIT_W[i], UNIT_H, 8, C_EDGE);
+    for (int opt = 0; opt < switchOptions(i); opt++) {
+      Rect r = unitPart(i, opt);
+      bool on = unitGet(i) == opt;
+      if (on) g.fillRoundRect(r.x, r.y, r.w, r.h, 8, C_BAR);
+      if (on) g.drawRoundRect(r.x, r.y, r.w, r.h, 8, C_PRIMARY);
+      textC(g, r.x + r.w / 2, r.y + 12, switchText(i, opt), B16, on ? C_ON_BAR : C_PRIMARY);
     }
   }
 
@@ -208,7 +227,7 @@ void drawSettings(Adafruit_GFX& g, AppState& s) {
     char url[40];
     snprintf(url, sizeof url, "http://%s", ip);
     text(g, 44, 416, TR("Lisää asetuksia puhelimella (samassa Wi-Fissä):", "More settings on your phone (same Wi-Fi):"), R14, C_TEXT2);
-    text(g, 44, 434, url, B16, C_NAVY);
+    text(g, 44, 434, url, B16, C_PRIMARY);
     drawQr(g, 666, 342, url, 3);
   } else {
     text(g, 44, 418, TR("Lisää asetuksia puhelimella, kun Wi-Fi on yhdistetty.", "More settings on your phone once Wi-Fi is connected."), R14, C_TEXT2);
@@ -246,10 +265,10 @@ void drawWifi(Adafruit_GFX& g, uint32_t now) {
       int y = ROW_Y + k * ROW_H;
       if (k) g.drawFastHLine(40, y, W - 80, C_LINE);
       if (i == nNets) {
-        text(g, 90, y + 18, TR("Muu verkko (kirjoita nimi)\x84", "Other network (type the name)\x84"), B18, C_NAVY);
+        text(g, 90, y + 18, TR("Muu verkko (kirjoita nimi)\x84", "Other network (type the name)\x84"), B18, C_PRIMARY);
         continue;
       }
-      signalBars(g, 44, y + 16, nets[i].rssi, C_NAVY);
+      signalBars(g, 44, y + 16, nets[i].rssi, C_PRIMARY);
       char name[40];
       fitCopy(name, sizeof name, nets[i].ssid, B18, 560);
       text(g, 90, y + 18, name, B18, C_TEXT);
@@ -343,7 +362,7 @@ void drawKeys(Adafruit_GFX& g, uint32_t now) {
 
   // text field
   g.fillRoundRect(KB_FIELD.x, KB_FIELD.y, KB_FIELD.w, KB_FIELD.h, 8, C_CARD);
-  g.drawRoundRect(KB_FIELD.x, KB_FIELD.y, KB_FIELD.w, KB_FIELD.h, 8, C_NAVY);
+  g.drawRoundRect(KB_FIELD.x, KB_FIELD.y, KB_FIELD.w, KB_FIELD.h, 8, C_PRIMARY);
   char shown[70];
   int len = strlen(field);
   if (kbFor == KB_PASS && !showPw) { int c = utf8Len(field); memset(shown, '*', c); shown[c] = 0; }
@@ -355,7 +374,7 @@ void drawKeys(Adafruit_GFX& g, uint32_t now) {
   else text(g, KB_FIELD.x + 16, KB_FIELD.y + 13, vis, B22, C_TEXT);
   if ((now / 500) % 2 == 0) {
     int cx = KB_FIELD.x + 16 + (len ? textW(B22, vis) : 0) + 2;
-    g.fillRect(cx, KB_FIELD.y + 12, 2, 28, C_NAVY);
+    g.fillRect(cx, KB_FIELD.y + 12, 2, 28, C_PRIMARY);
   }
   if (kbFor == KB_PASS) button(g, KB_SHOW, showPw ? TR("Piilota", "Hide") : TR("Näytä", "Show"), false);
 
@@ -363,8 +382,8 @@ void drawKeys(Adafruit_GFX& g, uint32_t now) {
   for (int i = 0; i < nKeys; i++) {
     const Key& k = keys[i];
     bool dark = k.kind != K_CHAR && k.kind != K_SPACE;
-    uint16_t bg = k.kind == K_ACTION ? C_NAVY : (k.kind == K_SHIFT && shift) ? C_NAVY : dark ? C_KEY_DARK : C_KEY;
-    uint16_t fg = (k.kind == K_ACTION || (k.kind == K_SHIFT && shift)) ? C_WHITE : C_TEXT;
+    uint16_t bg = k.kind == K_ACTION ? C_BAR : (k.kind == K_SHIFT && shift) ? C_BAR : dark ? C_KEY_DARK : C_KEY;
+    uint16_t fg = (k.kind == K_ACTION || (k.kind == K_SHIFT && shift)) ? C_ON_BAR : C_TEXT;
     g.fillRoundRect(k.r.x, k.r.y + 2, k.r.w, k.r.h, 7, C_EDGE);            // key shadow
     g.fillRoundRect(k.r.x, k.r.y, k.r.w, k.r.h, 7, bg);
     int cx = k.r.x + k.r.w / 2, cy = k.r.y + k.r.h / 2;
@@ -409,7 +428,7 @@ void drawConnect(Adafruit_GFX& g, uint32_t now) {
       float a = (i / 12.0f) * 6.2832f;
       int phase = (int)((now / 90) % 12);
       int age = (i - phase + 12) % 12;
-      uint16_t c = age < 3 ? C_NAVY : age < 6 ? C_EDGE : C_LINE;
+      uint16_t c = age < 3 ? C_PRIMARY : age < 6 ? C_EDGE : C_LINE;
       g.fillCircle(W / 2 + 34 * sinf(a), 190 - 34 * cosf(a), 6, c);
     }
     snprintf(t, sizeof t, TR("Yhdistetään: %s", "Connecting: %s"), name);
@@ -565,9 +584,9 @@ void uiTap(int x, int y, uint32_t now, AppState& s) {
       } else if (SET_DEMO.hit(x, y) && !s.demo) { hooks->useDemo(); screen = S_NONE; }
       else {
         for (int i = 0; i < N_SWITCHES; i++)
-          for (int half = 0; half < 2; half++)
-            if (unitHalf(i, half).hit(x, y) && unitIsA(i) != (half == 0)) {
-              unitSet(i, half == 0);
+          for (int opt = 0; opt < switchOptions(i); opt++)
+            if (unitPart(i, opt).hit(x, y) && unitGet(i) != opt) {
+              unitSet(i, opt);
               hooks->saveSettings();                   // remembered after a restart
             }
       }

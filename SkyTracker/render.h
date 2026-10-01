@@ -13,6 +13,21 @@
 
 void* renderAlloc(size_t bytes);                 // big scratch buffers (PSRAM on the ESP32)
 
+// ---- Colours ----------------------------------------------------------------------
+// Everything on screen takes its colours from the current theme: the light one, or
+// the dark one for the evening (amber and green on black, easy on the eyes in a dark room).
+struct Theme {
+  uint16_t sea, land, coast, border, ring, place, runway, country, water;   // map
+  uint16_t surface, stripe, background, photoBg, keyDark;                   // cards, panels
+  uint16_t bar, onBar, onBarSoft;                     // title bars and selected buttons
+  uint16_t ink, ink2, primary, line, edge, btnEdge;   // text, headings, rules, outlines
+  uint16_t accent, selected, shadow, outline, late;   // home marker, selected plane...
+};
+extern const Theme THEME_LIGHT, THEME_DARK;
+extern const Theme* theme;
+// Switch between the two; returns true if that changed anything (redraw the map).
+bool useDarkTheme(bool dark);
+
 void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom);
 void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm* now,
                    const struct tm* updated);

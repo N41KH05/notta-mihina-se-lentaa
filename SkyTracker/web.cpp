@@ -9,6 +9,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <time.h>
+#include <initializer_list>
 
 void webSaved(bool homeMoved, bool keyChanged);   // SkyTracker.ino: store and apply
 const char* resetReasonText();                    // SkyTracker.ino: why it last started
@@ -80,14 +81,16 @@ void decimal(String& out, double v, int digits) {   // decimal comma in Finnish
   localDecimal(b);
   out += b;
 }
-void segment(String& out, const char* name, const char* a, const char* aLabel, const char* b,
-             const char* bLabel, bool isA) {
+// A row of radio buttons that looks like the switches on the device.
+// opts: value, label, value, label...; sel = index of the chosen one.
+void segment(String& out, const char* name, std::initializer_list<const char*> opts, int sel) {
   out += "<div class=seg>";
-  for (int i = 0; i < 2; i++) {
-    const char* v = i ? b : a;
+  int i = 0;
+  for (auto it = opts.begin(); it != opts.end(); it += 2, i++) {
+    const char* v = it[0];
     out += "<input type=radio name="; out += name; out += " id="; out += name; out += v;
-    out += " value="; out += v; if ((i == 0) == isA) out += " checked"; out += ">";
-    out += "<label for="; out += name; out += v; out += ">"; out += i ? bLabel : aLabel; out += "</label>";
+    out += " value="; out += v; if (i == sel) out += " checked"; out += ">";
+    out += "<label for="; out += name; out += v; out += ">"; out += it[1]; out += "</label>";
   }
   out += "</div>";
 }
@@ -187,13 +190,13 @@ void sendPage(const char* msg, bool error) {
   // ---- language and units
   o += "<section class=card><h2>"; o += TR("Kieli ja yksiköt", "Language and units"); o += "</h2>";
   o += "<label class=f>"; o += TR("Kieli / Language", "Language / Kieli"); o += "</label>";
-  segment(o, "lang", "fi", "Suomi", "en", "English", language != LANG_EN);
+  segment(o, "lang", {"fi", "Suomi", "en", "English"}, language == LANG_EN);
   o += "<label class=f>"; o += TR("Etäisyys", "Distance"); o += "</label>";
-  segment(o, "dist", "km", "km", "nm", "nm", u.distKm);
+  segment(o, "dist", {"km", "km", "nm", "nm"}, !u.distKm);
   o += "<label class=f>"; o += TR("Nopeus", "Speed"); o += "</label>";
-  segment(o, "speed", "kmh", "km/h", "kt", "kt", u.speedKmh);
+  segment(o, "speed", {"kmh", "km/h", "kt", "kt"}, !u.speedKmh);
   o += "<label class=f>"; o += TR("Korkeus", "Altitude"); o += "</label>";
-  segment(o, "alt", "ft", TR("jalkaa (ft)", "feet (ft)"), "m", TR("metriä (m)", "metres (m)"), !u.altM);
+  segment(o, "alt", {"ft", TR("jalkaa (ft)", "feet (ft)"), "m", TR("metriä (m)", "metres (m)")}, u.altM);
   o += "</section>";
 
   // ---- home
@@ -218,8 +221,14 @@ void sendPage(const char* msg, bool error) {
 
   // ---- night
   bool nightOn = c.nightStart != c.nightEnd;
-  o += "<section class=card><h2>"; o += TR("Yötila", "Night mode"); o += "</h2>";
-  o += "<label class=chk><input type=checkbox name=night"; if (nightOn) o += " checked";
+  o += "<section class=card><h2>"; o += TR("Näyttö", "Screen"); o += "</h2>";
+  o += "<label class=f>"; o += TR("Tumma tila", "Dark mode"); o += "</label>";
+  segment(o, "dark", {"off", TR("Ei", "Off"), "on", TR("Kyllä", "On"),
+                      "auto", TR("Iltaisin", "After sunset")}, c.darkMode);
+  o += "<p class=help>";
+  o += TR("Tummat värit illaksi. Automaattisesti ne vaihtuvat auringon laskiessa ja noustessa kotisi kohdalla.",
+          "Dark colours for the evening. On automatic they switch when the sun sets and rises at your home.");
+  o += "</p><label class=chk><input type=checkbox name=night"; if (nightOn) o += " checked";
   o += "> "; o += TR("Sammuta näyttö yöksi", "Turn the screen off at night");
   o += "</label><div class=row><div><label class=f>"; o += TR("Alkaa", "Starts"); o += "</label>";
   hourSelect(o, "night_start", nightOn ? c.nightStart : NIGHT_START_HOUR);
@@ -336,6 +345,9 @@ void handleSave() {
   } else {
     c.nightStart = c.nightEnd = 0;                // never switch off
   }
+
+  String dark = server.arg("dark");
+  if (dark.length()) c.darkMode = dark == "on" ? DARK_ON : dark == "auto" ? DARK_AUTO : DARK_OFF;
 
   c.photos = server.hasArg("photos");
   String contact = server.arg("contact");

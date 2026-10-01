@@ -19,11 +19,33 @@ struct Config {
   double homeLat = HOME_LAT, homeLon = HOME_LON;
   char homeName[24] = HOME_NAME;   // empty: the default label in the current language
   int8_t nightStart = NIGHT_START_HOUR, nightEnd = NIGHT_END_HOUR;   // equal = never off
+  uint8_t darkMode = DEFAULT_DARK_MODE;      // DARK_OFF, DARK_ON or DARK_AUTO
   bool photos = SHOW_PHOTOS;
   char contact[64] = PHOTO_CONTACT;          // for Planespotters (see config.h)
   char airlabsKey[80] = AIRLABS_KEY;         // "" = no timetable times
 };
 inline Config cfg;
+enum DarkMode : uint8_t { DARK_OFF = 0, DARK_ON = 1, DARK_AUTO = 2 };
+
+// The sun's height above the horizon in degrees at a place and time (Unix seconds).
+// A short almanac formula, good to a fraction of a degree.
+inline double sunElevation(double epoch, double lat, double lon) {
+  const double R = M_PI / 180;
+  double n = (epoch - 946728000.0) / 86400.0;            // days since 2000-01-01 12:00 UTC
+  double L = 280.460 + 0.9856474 * n, g = (357.528 + 0.9856003 * n) * R;
+  double lam = (L + 1.915 * sin(g) + 0.020 * sin(2 * g)) * R, eps = (23.439 - 0.0000004 * n) * R;
+  double dec = asin(sin(eps) * sin(lam));
+  double ra = atan2(cos(eps) * sin(lam), cos(lam));
+  double gmst = fmod(280.46061837 + 360.98564736629 * n, 360.0) * R;
+  double ha = gmst + lon * R - ra;
+  return asin(sin(lat * R) * sin(dec) + cos(lat * R) * cos(dec) * cos(ha)) / R;
+}
+// Should the screen use the dark colours now? epoch 0 = the clock isn't set yet.
+inline bool darkWanted(double epoch) {
+  if (cfg.darkMode == DARK_ON) return true;
+  if (cfg.darkMode != DARK_AUTO || epoch < 1.6e9) return false;
+  return sunElevation(epoch, cfg.homeLat, cfg.homeLon) < -0.833;   // the sun has set
+}
 
 static const float WORLD_M = 20037508.34f;             // half the mercator world width
 static const int SCREEN_W = 800, SCREEN_H = 480, MAP_W = 530;

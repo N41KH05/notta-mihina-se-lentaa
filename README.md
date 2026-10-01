@@ -4,13 +4,14 @@ A desk display that shows the planes flying around you. It runs on a Waveshare E
 
 The name is Finnish, roughly "so, where's that one flying to?". The screen is in English by default and can be switched to Finnish.
 
-You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html?v=14) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
+You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html?v=15) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
 
 <p align="center"><img src="docs/img/hero.png" width="720" alt="The display with a selected flight from Stockholm to Oulu"></p>
 
 <p align="center">
 <img src="docs/img/map.png" width="400" alt="Map with planes around Helsinki">
 <img src="docs/img/zoomout.png" width="400" alt="Zoomed out over the Baltic Sea">
+<img src="docs/img/dark.png" width="400" alt="Dark mode">
 </p>
 
 ## What it does
@@ -18,8 +19,9 @@ You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa
 - Planes around home on a map with coastlines, lakes, towns and airports. Positions update every 4 seconds and the planes move smoothly in between. Colour shows altitude, and the icon shows the kind of aircraft: airliner, wide-body, business jet, propeller plane, light aircraft, helicopter or glider.
 - Tap a plane for its route (e.g. ARN → OUL), estimated arrival, altitude, climb rate, speed, heading, distance and aircraft type. The map draws the path it has flown since take-off, coloured by altitude.
 - Aircraft photos from Planespotters.net, with the photographer's name and a QR code to the photo page.
+- A dark mode in amber and green, either always on or switching at sunset and sunrise.
 - Wi-Fi and home location are set up on the touchscreen. Home can be found by address search.
-- A small settings page for your phone: units, language, home, night hours, photos, and an optional AirLabs key for scheduled times.
+- A small settings page for your phone: units, language, dark mode, home, night hours, photos, and an optional AirLabs key for scheduled times.
 - It's meant to be left running. It reconnects after power or router cuts, has a watchdog, turns the screen off at night and restarts itself once a day while idle.
 
 ## Building one

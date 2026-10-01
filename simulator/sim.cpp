@@ -16,6 +16,7 @@ static AppState s;
 static Canvas* frame;
 static Gestures gest;
 static uint32_t nowMs, lastPoll;
+static double epochNow = 0;          // real time from the page, for the automatic dark mode
 
 // ---- simulated Wi-Fi, so the setup screens can be tried -------------------------------
 static const WifiNet FAKE[] = {
@@ -126,9 +127,13 @@ __attribute__((export_name("sim_first_run"))) void sim_first_run() {
   uiOpenWifi("", true, false);
 }
 
+// The page's clock (Unix seconds), so "dark after sunset" works like on the board.
+__attribute__((export_name("sim_clock"))) void sim_clock(double epoch) { epochNow = epoch; }
+
 // Draw a frame; returns a pointer to 800x480 RGB565 pixels.
 __attribute__((export_name("sim_frame"))) uint16_t* sim_frame(uint32_t ms, int hour, int minute, int second) {
   nowMs = ms;
+  useDarkTheme(darkWanted(epochNow));
   if (uiActive()) {
     uiTick(ms);
     if (uiActive()) { uiRender(*frame, s, ms); return frame->getBuffer(); }
@@ -169,11 +174,11 @@ __attribute__((export_name("sim_frame"))) uint16_t* sim_frame(uint32_t ms, int h
   if (!s.updatedEpoch) { s.updatedEpoch = 1; upd = now; }
   // Like the board: the map background is drawn only when something it shows changed.
   static Canvas* base = new Canvas(SCREEN_W, SCREEN_H);
-  static struct Key { float cx, cy; int zoom; uint8_t lang; Units u; double hlat, hlon; char hname[24]; } last;
+  static struct Key { float cx, cy; int zoom; uint8_t lang; Units u; double hlat, hlon; char hname[24]; const Theme* th; } last;
   Key k;
   memset(&k, 0, sizeof k);
   k.cx = s.cx; k.cy = s.cy; k.zoom = s.zoom; k.lang = language; k.u = units;
-  k.hlat = cfg.homeLat; k.hlon = cfg.homeLon;
+  k.hlat = cfg.homeLat; k.hlon = cfg.homeLon; k.th = theme;
   snprintf(k.hname, sizeof k.hname, "%s", cfg.homeName);
   if (memcmp(&k, &last, sizeof k)) {
     renderBase(*base, s.cx, s.cy, s.zoom);

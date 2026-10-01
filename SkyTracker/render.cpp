@@ -7,16 +7,53 @@
 #include "qr.h"
 
 #define RGB(r, g, b) (uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
-static const uint16_t C_WHITE = 0xFFFF, C_BLACK = 0x0000;
-static const uint16_t C_SEA = RGB(186, 212, 234), C_LAND = RGB(247, 244, 236);
-static const uint16_t C_COAST = RGB(96, 128, 160), C_BORDER = RGB(150, 138, 160);
-static const uint16_t C_RING = RGB(90, 120, 158), C_TEXT = RGB(28, 32, 44);
-static const uint16_t C_TEXT2 = RGB(104, 110, 124), C_PLACE = RGB(62, 64, 76);
-static const uint16_t C_RUNWAY = RGB(78, 78, 90), C_NAVY = RGB(22, 36, 66);
-static const uint16_t C_ACCENT = RGB(226, 58, 94), C_EMERG = RGB(214, 30, 30);
-static const uint16_t C_LINE = RGB(214, 218, 226), C_OUTLINE = RGB(30, 36, 52);
-static const uint16_t C_BTN_EDGE = RGB(160, 168, 184);
-static const uint16_t C_COUNTRY = RGB(128, 112, 140), C_WATER = RGB(58, 96, 138);
+static const uint16_t C_WHITE = 0xFFFF, C_BLACK = 0x0000, C_EMERG = RGB(214, 30, 30);
+
+const Theme THEME_LIGHT = {
+  RGB(186, 212, 234), RGB(247, 244, 236), RGB(96, 128, 160), RGB(150, 138, 160),     // sea, land, coast, border
+  RGB(90, 120, 158), RGB(62, 64, 76), RGB(78, 78, 90), RGB(128, 112, 140), RGB(58, 96, 138),
+  0xFFFF, RGB(243, 245, 249), RGB(238, 241, 246), RGB(226, 232, 240), RGB(206, 212, 224),
+  RGB(22, 36, 66), 0xFFFF, RGB(200, 210, 230),                                        // bar
+  RGB(28, 32, 44), RGB(104, 110, 124), RGB(22, 36, 66), RGB(214, 218, 226),          // ink...
+  RGB(170, 178, 194), RGB(160, 168, 184),
+  RGB(226, 58, 94), RGB(255, 236, 242), RGB(120, 130, 150), RGB(30, 36, 52), RGB(200, 110, 0),
+};
+const Theme THEME_DARK = {
+  RGB(16, 27, 38), RGB(36, 40, 42), RGB(74, 106, 128), RGB(110, 100, 124),
+  RGB(86, 128, 156), RGB(206, 194, 170), RGB(150, 150, 160), RGB(156, 136, 176), RGB(96, 146, 186),
+  RGB(28, 32, 34), RGB(34, 38, 40), RGB(16, 18, 20), RGB(44, 50, 52), RGB(44, 50, 52),
+  RGB(10, 12, 13), RGB(104, 226, 136), RGB(150, 210, 160),
+  RGB(255, 176, 60), RGB(176, 144, 92), RGB(104, 226, 136), RGB(54, 60, 62),
+  RGB(84, 92, 94), RGB(84, 92, 94),
+  RGB(104, 226, 136), RGB(30, 62, 44), RGB(0, 0, 0), RGB(0, 0, 0), RGB(240, 120, 60),
+};
+const Theme* theme = &THEME_LIGHT;
+bool useDarkTheme(bool dark) {
+  const Theme* t = dark ? &THEME_DARK : &THEME_LIGHT;
+  if (t == theme) return false;
+  theme = t;
+  return true;
+}
+#define C_SEA      (theme->sea)
+#define C_LAND     (theme->land)
+#define C_COAST    (theme->coast)
+#define C_BORDER   (theme->border)
+#define C_RING     (theme->ring)
+#define C_PLACE    (theme->place)
+#define C_RUNWAY   (theme->runway)
+#define C_COUNTRY  (theme->country)
+#define C_WATER    (theme->water)
+#define C_SURFACE  (theme->surface)
+#define C_BAR      (theme->bar)
+#define C_ON_BAR   (theme->onBar)
+#define C_TEXT     (theme->ink)
+#define C_TEXT2    (theme->ink2)
+#define C_PRIMARY  (theme->primary)
+#define C_LINE     (theme->line)
+#define C_BTN_EDGE (theme->btnEdge)
+#define C_ACCENT   (theme->accent)
+#define C_OUTLINE  (theme->outline)
+#define C_SHADOW   (theme->shadow)
 
 static const int W = SCREEN_W, H = SCREEN_H, PANEL_X = MAP_W;
 
@@ -590,7 +627,7 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
     float x = sx(ap.x), y = sy(ap.y);
     if (x < 0 || x >= MAP_W || y < 0 || y >= H) continue;
     int ix = rnd(x), iy = rnd(y);
-    g.fillCircle(ix, iy, 5, C_WHITE);
+    g.fillCircle(ix, iy, 5, C_SURFACE);
     ring(g, ix, iy, 4, 2, C_RUNWAY);
     g.drawFastHLine(ix - 3, iy, 7, C_RUNWAY);
     g.drawFastVLine(ix, iy - 3, 7, C_RUNWAY);
@@ -599,7 +636,7 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
   // home
   if (hx > -10 && hx < MAP_W + 10 && hy > -10 && hy < H + 10) {
     int ix = rnd(hx), iy = rnd(hy);
-    g.fillCircle(ix, iy, 9, C_WHITE);
+    g.fillCircle(ix, iy, 9, C_SURFACE);
     ring(g, ix, iy, 8, 2, C_ACCENT);
     g.fillCircle(ix, iy, 3, C_ACCENT);
     take(hx - 10, hy - 10, hx + 10, hy + 10);
@@ -647,7 +684,7 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
   int L = rnd(best * unitM / real), x = 12, y = H - 14;
   char t[16];
   snprintf(t, sizeof t, "%d %s", best, units.distKm ? "km" : "nm");
-  g.fillRoundRect(x - 6, y - 18, L + 16 + textW(B12, t), 26, 4, C_WHITE);
+  g.fillRoundRect(x - 6, y - 18, L + 16 + textW(B12, t), 26, 4, C_SURFACE);
   g.fillRect(x, y - 1, L, 3, C_TEXT);
   g.fillRect(x, y - 5, 2, 6, C_TEXT);
   g.fillRect(x + L - 1, y - 5, 2, 6, C_TEXT);
@@ -672,25 +709,25 @@ static const int SET_X = 10, SET_Y = H - 40 - BTN - 4;
 static const int PB_Y = H - 96, PB_H = 40;
 
 static void mapButton(Adafruit_GFX& g, int y, int kind, int bx = BTN_X) {
-  g.fillRoundRect(bx + 2, y + 3, BTN, BTN, 8, RGB(120, 130, 150));   // shadow
-  g.fillRoundRect(bx, y, BTN, BTN, 8, C_WHITE);
+  g.fillRoundRect(bx + 2, y + 3, BTN, BTN, 8, C_SHADOW);   // shadow
+  g.fillRoundRect(bx, y, BTN, BTN, 8, C_SURFACE);
   g.drawRoundRect(bx, y, BTN, BTN, 8, C_BTN_EDGE);
   int cx = bx + BTN / 2, cy = y + BTN / 2;
   if (kind == 3) {                                                  // gear
     for (int i = 0; i < 8; i++) {
       float a = i * 0.785398f;
-      g.fillCircle(rnd(cx + 12 * sinf(a)), rnd(cy - 12 * cosf(a)), 4, C_NAVY);
+      g.fillCircle(rnd(cx + 12 * sinf(a)), rnd(cy - 12 * cosf(a)), 4, C_PRIMARY);
     }
-    g.fillCircle(cx, cy, 12, C_NAVY);
-    g.fillCircle(cx, cy, 5, C_WHITE);
+    g.fillCircle(cx, cy, 12, C_PRIMARY);
+    g.fillCircle(cx, cy, 5, C_SURFACE);
     return;
   }
-  if (kind != 2) g.fillRect(cx - 11, cy - 2, 22, 4, C_NAVY);        // minus bar
-  if (kind == 0) g.fillRect(cx - 2, cy - 11, 4, 22, C_NAVY);        // plus
+  if (kind != 2) g.fillRect(cx - 11, cy - 2, 22, 4, C_PRIMARY);        // minus bar
+  if (kind == 0) g.fillRect(cx - 2, cy - 11, 4, 22, C_PRIMARY);        // plus
   if (kind == 2) {                                                  // house
-    g.fillTriangle(cx, cy - 13, cx - 14, cy, cx + 14, cy, C_NAVY);
-    g.fillRect(cx - 9, cy, 18, 12, C_NAVY);
-    g.fillRect(cx - 3, cy + 4, 6, 8, C_WHITE);
+    g.fillTriangle(cx, cy - 13, cx - 14, cy, cx + 14, cy, C_PRIMARY);
+    g.fillRect(cx - 9, cy, 18, 12, C_PRIMARY);
+    g.fillRect(cx - 3, cy + 4, 6, 8, C_SURFACE);
   }
 }
 
@@ -747,8 +784,8 @@ int drawQr(Adafruit_GFX& g, int x, int y, const char* link, int m) {
 
 static void drawPhotoCard(Adafruit_GFX& g, uint32_t nowMs) {
   int h = cardHeight();
-  g.fillRoundRect(CARD_X + 2, CARD_Y + 3, CARD_W, h, 10, RGB(120, 130, 150));    // shadow
-  g.fillRoundRect(CARD_X, CARD_Y, CARD_W, h, 10, C_WHITE);
+  g.fillRoundRect(CARD_X + 2, CARD_Y + 3, CARD_W, h, 10, C_SHADOW);    // shadow
+  g.fillRoundRect(CARD_X, CARD_Y, CARD_W, h, 10, C_SURFACE);
   g.drawRoundRect(CARD_X, CARD_Y, CARD_W, h, 10, C_BTN_EDGE);
   int px = CARD_X + 8, py = CARD_Y + 8;
   if (photo.state == PHOTO_MISSING) {
@@ -758,7 +795,7 @@ static void drawPhotoCard(Adafruit_GFX& g, uint32_t nowMs) {
   if (photo.state == PHOTO_READY && photo.pix) {
     g.drawRGBBitmap(px, py, photo.pix, PHOTO_W, PHOTO_H);
   } else {                                  // still loading
-    g.fillRect(px, py, PHOTO_W, PHOTO_H, RGB(226, 232, 240));
+    g.fillRect(px, py, PHOTO_W, PHOTO_H, theme->photoBg);
     char t[32];
     const char* lbl = TR("Haetaan kuvaa", "Loading photo");
     snprintf(t, sizeof t, "%s%.*s", lbl, (int)((nowMs / 400) % 4), "...");
@@ -855,7 +892,7 @@ static void drawPlanes(Adafruit_GFX& g, AppState& s, int n, uint32_t nowMs) {
       if (sel != (pass == 1)) continue;
       float x = sx(p.x), y = sy(p.y), sz = size + (sel ? 3 : 0), hd = p.hasTrack ? p.track : 0;
       if (sel) {
-        g.fillCircle(rnd(x), rnd(y), rnd(sz + 9), RGB(255, 236, 242));
+        g.fillCircle(rnd(x), rnd(y), rnd(sz + 9), theme->selected);
         ring(g, rnd(x), rnd(y), rnd(sz + 8), 2, C_ACCENT);
       }
       IconKind kind = iconKind(p);
@@ -879,9 +916,9 @@ static void drawPlanes(Adafruit_GFX& g, AppState& s, int n, uint32_t nowMs) {
       if (p.emergency())
         planeTag(g, sx(p.x), sy(p.y), p.label(), B12, l2, C_EMERG, C_WHITE, C_WHITE, C_EMERG, sel);
       else if (sel)
-        planeTag(g, sx(p.x), sy(p.y), p.label(), B14, l2, C_NAVY, C_WHITE, RGB(200, 210, 230), C_NAVY, true);
+        planeTag(g, sx(p.x), sy(p.y), p.label(), B14, l2, C_BAR, C_ON_BAR, theme->onBarSoft, C_BAR, true);
       else
-        planeTag(g, sx(p.x), sy(p.y), p.label(), B12, l2, C_WHITE, C_TEXT, C_TEXT2, C_BTN_EDGE, false);
+        planeTag(g, sx(p.x), sy(p.y), p.label(), B12, l2, C_SURFACE, C_TEXT, C_TEXT2, C_BTN_EDGE, false);
     }
 }
 
@@ -933,14 +970,14 @@ static void drawCoverage(Adafruit_GFX& g, AppState& s) {
   if (covered) return;
   for (int i = 0; i < 360; i += 2) {
     float a = i * 0.0174533f;
-    g.fillRect(rnd(cx + r * sinf(a)) - 1, rnd(cy - r * cosf(a)) - 1, 3, 3, C_NAVY);
+    g.fillRect(rnd(cx + r * sinf(a)) - 1, rnd(cy - r * cosf(a)) - 1, 3, 3, C_PRIMARY);
   }
   const char* t = units.distKm ? TR("Koneet 460 km:n säteellä keskipisteestä", "Aircraft within 460 km of the centre")
                                : TR("Koneet 250 nm:n säteellä keskipisteestä", "Aircraft within 250 nm of the centre");
   int w = textW(B12, t);
   int nx = 312 - w / 2, ny = H - 34;     // bottom centre, between the scale bar and the buttons
-  g.fillRoundRect(nx - 8, ny, w + 16, 22, 5, C_NAVY);
-  text(g, nx, ny + 3, t, B12, C_WHITE);
+  g.fillRoundRect(nx - 8, ny, w + 16, 22, 5, C_BAR);
+  text(g, nx, ny + 3, t, B12, C_ON_BAR);
 }
 
 static void row(Adafruit_GFX& g, int y, const char* lab, const char* value, uint16_t swatch = 0) {
@@ -954,9 +991,9 @@ static void row(Adafruit_GFX& g, int y, const char* lab, const char* value, uint
 }
 
 static void panelButton(Adafruit_GFX& g, int x, int w, const char* label, bool on) {
-  g.fillRoundRect(x, PB_Y, w, PB_H, 8, on ? C_NAVY : C_WHITE);
-  g.drawRoundRect(x, PB_Y, w, PB_H, 8, on ? C_NAVY : C_BTN_EDGE);
-  textC(g, x + w / 2, PB_Y + 12, label, B14, on ? C_WHITE : C_NAVY);
+  g.fillRoundRect(x, PB_Y, w, PB_H, 8, on ? C_BAR : C_SURFACE);
+  g.drawRoundRect(x, PB_Y, w, PB_H, 8, on ? C_PRIMARY : C_BTN_EDGE);
+  textC(g, x + w / 2, PB_Y + 12, label, B14, on ? C_ON_BAR : C_PRIMARY);
 }
 
 static void panelList(Adafruit_GFX& g, AppState& s, int n) {
@@ -965,7 +1002,7 @@ static void panelList(Adafruit_GFX& g, AppState& s, int n) {
   text(g, x0, 50, TR("NÄKYVISSÄ", "IN VIEW"), B15, C_TEXT);
   snprintf(t, sizeof t, "%d %s", n, n == 1 ? TR("kone", "aircraft") : TR("konetta", "aircraft"));
   textR(g, x1, 51, t, R14, C_TEXT2);
-  g.fillRect(x0, 74, x1 - x0, 2, C_NAVY);
+  g.fillRect(x0, 74, x1 - x0, 2, C_PRIMARY);
   nRows = 0;
   if (!n) {
     if (s.wifiDown && !s.demo) {
@@ -1005,7 +1042,7 @@ static void panelList(Adafruit_GFX& g, AppState& s, int n) {
   int y = 82;
   for (int k = 0; k < n && k < 13; k++) {
     const Plane& p = s.planes[viewIdx[k]];
-    if (k % 2) g.fillRect(PANEL_X + 8, y - 4, W - PANEL_X - 16, 26, RGB(243, 245, 249));
+    if (k % 2) g.fillRect(PANEL_X + 8, y - 4, W - PANEL_X - 16, 26, theme->stripe);
     g.fillCircle(x0 + 4, y + 9, 5, altColor(p));
     text(g, x0 + 16, y, p.label(), B15, C_TEXT);
     fmtAlt(t, sizeof t, p, true);
@@ -1033,7 +1070,7 @@ static int clockDiff(int a, int b) { return ((b - a) % 1440 + 1440 + 720) % 1440
 // when there are some; otherwise an arrival estimate from distance and ground speed.
 static void panelTimes(Adafruit_GFX& g, const Route& r, const Plane& p, const struct tm* now,
                        int x0, int x1, int y) {
-  static const uint16_t C_LATE = RGB(200, 110, 0);
+  const uint16_t C_LATE = theme->late;
   char t[32], c[12];
   bool sched = r.hasTimes;
   // Departure
@@ -1078,7 +1115,7 @@ static void panelDetails(Adafruit_GFX& g, AppState& s, const Plane& p, const str
   const Fnt* tf = &B34;
   if (textW(*tf, title) > x1 - x0) tf = &B26;
   if (textW(*tf, title) > x1 - x0) tf = &B22;
-  text(g, x0, 46, title, *tf, C_NAVY);
+  text(g, x0, 46, title, *tf, C_PRIMARY);
   if (known && r->airline[0]) {
     if (r->flight[0] && p.cs[0]) snprintf(sub, sizeof sub, "%s  \x83  %s", r->airline, p.cs);
     else snprintf(sub, sizeof sub, "%s", r->airline);
@@ -1140,7 +1177,7 @@ static void panelDetails(Adafruit_GFX& g, AppState& s, const Plane& p, const str
 // ---- Setting home: a cross in the middle of the map, and Save / Cancel -----------------
 static void drawPickCross(Adafruit_GFX& g) {
   int cx = MAP_W / 2, cy = H / 2;
-  for (int r = 15; r <= 17; r++) g.drawCircle(cx, cy, r, C_WHITE);
+  for (int r = 15; r <= 17; r++) g.drawCircle(cx, cy, r, C_SURFACE);
   for (int r = 13; r <= 14; r++) g.drawCircle(cx, cy, r, C_ACCENT);
   g.fillRect(cx - 30, cy - 2, 16, 4, C_ACCENT);
   g.fillRect(cx + 15, cy - 2, 16, 4, C_ACCENT);
@@ -1149,12 +1186,12 @@ static void drawPickCross(Adafruit_GFX& g) {
   g.fillCircle(cx, cy, 3, C_ACCENT);
   const char* t = TR("Siirrä karttaa, kunnes risti on kotisi kohdalla", "Move the map until the cross is on your home");
   int w = textW(B13, t);
-  g.fillRoundRect(MAP_W / 2 - w / 2 - 10, 10, w + 20, 26, 6, C_NAVY);
-  text(g, MAP_W / 2 - w / 2, 15, t, B13, C_WHITE);
+  g.fillRoundRect(MAP_W / 2 - w / 2 - 10, 10, w + 20, 26, 6, C_BAR);
+  text(g, MAP_W / 2 - w / 2, 15, t, B13, C_ON_BAR);
 }
 static void panelPick(Adafruit_GFX& g, const AppState& s) {
   int x0 = PANEL_X + 16, x1 = W - 16;
-  text(g, x0, 50, TR("Aseta koti", "Set home"), B26, C_NAVY);
+  text(g, x0, 50, TR("Aseta koti", "Set home"), B26, C_PRIMARY);
   char t[64];
   if (s.pickName[0]) {
     text(g, x0, 94, TR("Haun tulos:", "Search result:"), R13, C_TEXT2);
@@ -1205,8 +1242,8 @@ void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm
     char t[32];
     snprintf(t, sizeof t, TR("SEURATAAN %s", "FOLLOWING %s"), sel->label());
     int w = textW(B13, t), by = card ? CARD_Y + cardHeight() + 10 : 8, bx = card ? CARD_X : 8;
-    g.fillRoundRect(bx, by, w + 16, 24, 5, C_NAVY);
-    text(g, bx + 8, by + 4, t, B13, C_WHITE);
+    g.fillRoundRect(bx, by, w + 16, 24, 5, C_BAR);
+    text(g, bx + 8, by + 4, t, B13, C_ON_BAR);
   }
   mapButton(g, BTN_Y_IN, 0);
   mapButton(g, BTN_Y_OUT, 1);
@@ -1216,17 +1253,17 @@ void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm
 
   // panel
   int x0 = PANEL_X + 16, x1 = W - 16;
-  g.fillRect(PANEL_X, 0, W - PANEL_X, H, C_WHITE);
-  g.fillRect(PANEL_X, 0, 2, H, C_NAVY);
-  g.fillRect(PANEL_X, 0, W - PANEL_X, 38, C_NAVY);
+  g.fillRect(PANEL_X, 0, W - PANEL_X, H, C_SURFACE);
+  g.fillRect(PANEL_X, 0, 2, H, C_BAR);
+  g.fillRect(PANEL_X, 0, W - PANEL_X, 38, C_BAR);
   char t[64], c[16];
   fmtClock(c, sizeof c, now, false);
-  textR(g, x1, 9, c, B16, C_WHITE);
+  textR(g, x1, 9, c, B16, C_ON_BAR);
   // Name: the biggest font that fits beside the clock
   const Fnt* nf = &B12;
   for (const Fnt* f : {&B16, &B15, &B14, &B13})
     if (textW(*f, APP_NAME) <= x1 - textW(B16, c) - 12 - x0) { nf = f; break; }
-  text(g, x0, 9 + (16 - nf->size) / 2 + 1, APP_NAME, *nf, C_WHITE);
+  text(g, x0, 9 + (16 - nf->size) / 2 + 1, APP_NAME, *nf, C_ON_BAR);
   if (s.pickHome) panelPick(g, s);
   else if (sel) panelDetails(g, s, *sel, now);
   else panelList(g, s, n);
@@ -1246,11 +1283,11 @@ void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm
 }
 
 void renderMessage(Adafruit_GFX& g, const char* big, const char* small) {
-  g.fillScreen(C_NAVY);
+  g.fillScreen(C_BAR);
   g.setTextWrap(false);
-  planeShape(g, W / 2, 170, 45, 30, C_WHITE);
-  textC(g, W / 2, 222, big, B22, C_WHITE);
-  textC(g, W / 2, 258, small, R14, RGB(200, 210, 230));
+  planeShape(g, W / 2, 170, 45, 30, C_ON_BAR);
+  textC(g, W / 2, 222, big, B22, C_ON_BAR);
+  textC(g, W / 2, 258, small, R14, theme->onBarSoft);
 }
 
 // ============================================================================

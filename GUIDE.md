@@ -46,9 +46,10 @@ Once it's connected it asks **Where is home?** Home is the centre of the map and
 - Drag to move the map, pinch or use + and − to zoom. The house button goes back to home.
 - Tap a plane, on the map or in the list, to see its details. **FOLLOW** keeps it centred; **CLOSE** or a tap on empty map goes back to the list.
 - The selected plane's path since take-off is drawn on the map, coloured by altitude, and keeps growing as it flies. It comes from adsb.lol's track history. If that isn't available, a dashed line from the departure airport is shown instead.
-- The gear in the bottom left opens Settings: Wi-Fi, units, language, home, demo mode and the data status.
+- The gear in the bottom left opens Settings: Wi-Fi, units, language, dark mode, home, demo mode and the data status.
 - Colours show altitude: red and orange are low, green is in between, blue and purple are at cruising height. The icon shows the kind of aircraft (airliner, wide-body, business jet, propeller plane, light aircraft, helicopter, glider), worked out from its type code or, failing that, the size class its transponder sends. Bigger aircraft get bigger icons.
 - After 5 minutes without a touch it goes back to the home view.
+- Dark mode swaps the colours for amber and green on black. In Settings, **Off** keeps the light colours, **On** keeps the dark ones, and **Auto** switches at sunset and back at sunrise at your home location (it needs the clock, so it stays light until Wi-Fi has set the time).
 - At night (23–07 unless you change it) the screen turns off, since the backlight can't be dimmed. A tap wakes it.
 - The position services return planes within 250 nm of a point. Zoom out further and you'll see a dotted circle marking that limit.
 
@@ -73,7 +74,7 @@ Open Settings on the device. At the bottom it shows an address like `http://192.
 - the device status: Wi-Fi, data source, number of planes, AirLabs requests today, uptime and the reason for the last restart
 - language and units
 - home: the label on the map and its coordinates (a decimal comma or point both work)
-- night mode on or off, and its hours
+- dark mode (off, on, or after sunset), and turning the screen off at night with its hours
 - photos on or off, and the contact email for Planespotters
 - the AirLabs key (only the last 4 characters are shown; leave the field empty to keep it)
 
@@ -98,7 +99,9 @@ Anyone on your Wi-Fi can open the page. If that bothers you, set `WEB_PASSWORD` 
 
 ## Units and saved settings
 
-Distance (km or nm), speed (km/h or kt), altitude (feet or metres) and language (English or Suomi) are switched in Settings. The defaults are in `config.h`: `DEFAULT_DISTANCE_KM`, `DEFAULT_SPEED_KMH`, `DEFAULT_ALTITUDE_M` and `DEFAULT_LANGUAGE`.
+Distance (km or nm), speed (km/h or kt), altitude (feet or metres) language (English or Suomi) and dark mode are switched in Settings. The defaults are in `config.h`: `DEFAULT_DISTANCE_KM`, `DEFAULT_SPEED_KMH`, `DEFAULT_ALTITUDE_M`, `DEFAULT_LANGUAGE` and `DEFAULT_DARK_MODE`.
+
+Both colour sets are in `render.cpp` (`THEME_LIGHT` and `THEME_DARK`) if you want to change them.
 
 Everything you set is saved in flash and survives restarts, power cuts and firmware updates. **Forget network** only removes the Wi-Fi network. To wipe everything, enable Tools → Erase All Flash Before Sketch Upload for one upload.
 

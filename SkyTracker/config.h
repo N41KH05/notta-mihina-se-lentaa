@@ -86,3 +86,5 @@
 // night the screen turns off. A tap wakes it for a while.
 #define NIGHT_START_HOUR  23       // set both the same to never switch off
 #define NIGHT_END_HOUR    7
+// Dark colours: 0 = never, 1 = always, 2 = from sunset to sunrise at home.
+#define DEFAULT_DARK_MODE 0

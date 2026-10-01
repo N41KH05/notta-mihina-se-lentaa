@@ -114,10 +114,17 @@ void shiftBase(int dx, int dy) {
   }
 }
 
+// Light or dark colours, by the setting and, in automatic mode, by the sun at home.
+static void applyTheme() {
+  time_t t = time(nullptr);
+  if (useDarkTheme(darkWanted(t > 1600000000 ? (double)t : 0))) baseStale = true;
+}
+
 void drawFrame() {
   struct tm now, upd;
   bool haveTime = getLocalTime(&now, 0);
   xSemaphoreTake(lock, portMAX_DELAY);
+  applyTheme();
   if (baseStale || state.zoom != baseZoom || fabsf(state.cx - baseCx) > 0.5f * metresPerPx(state.zoom) ||
       fabsf(state.cy - baseCy) > 0.5f * metresPerPx(state.zoom)) {
     renderBase(baseCanvas, state.cx, state.cy, state.zoom);
@@ -164,6 +171,8 @@ void loadSettings() {
   if (prefs.isKey("homeName")) prefs.getString("homeName", cfg.homeName, sizeof cfg.homeName);
   cfg.nightStart = prefs.getChar("nightStart", cfg.nightStart);
   cfg.nightEnd = prefs.getChar("nightEnd", cfg.nightEnd);
+  cfg.darkMode = prefs.getUChar("dark", cfg.darkMode) % 3;
+  useDarkTheme(darkWanted(0));         // boot messages too, if dark is always on
   cfg.photos = prefs.getBool("photos", cfg.photos);
   if (prefs.isKey("contact")) prefs.getString("contact", cfg.contact, sizeof cfg.contact);
   if (prefs.isKey("airlabs")) prefs.getString("airlabs", cfg.airlabsKey, sizeof cfg.airlabsKey);
@@ -276,6 +285,7 @@ void hSaveSettings() {
   prefs.putBool("speedKmh", units.speedKmh);
   prefs.putBool("altM", units.altM);
   prefs.putUChar("lang", language);
+  prefs.putUChar("dark", cfg.darkMode);
   prefs.end();
   languageChanged();
   baseStale = true;                    // range rings and scale bar change unit
@@ -291,6 +301,7 @@ void webSaved(bool homeMoved, bool keyChanged) {
   prefs.putString("homeName", cfg.homeName);
   prefs.putChar("nightStart", cfg.nightStart);
   prefs.putChar("nightEnd", cfg.nightEnd);
+  prefs.putUChar("dark", cfg.darkMode);
   prefs.putBool("photos", cfg.photos);
   prefs.putString("contact", cfg.contact);
   prefs.putString("airlabs", cfg.airlabsKey);
@@ -586,6 +597,7 @@ void loop() {
       lastUi = millis();
       canvas.use(boardBackBuffer());
       xSemaphoreTake(lock, portMAX_DELAY);
+      applyTheme();
       uiRender(canvas, state, millis());
       xSemaphoreGive(lock);
       boardPresent();

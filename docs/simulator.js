@@ -1,5 +1,5 @@
 // The firmware build (simulator/build.py writes it next to this file).
-const WASM_URL = "sim.wasm?v=14";
+const WASM_URL = "sim.wasm?v=15";
 
 (async function () {
   const statusEl = document.getElementById("status");
@@ -108,6 +108,7 @@ const WASM_URL = "sim.wasm?v=14";
     if (pts.length || t - lastDraw > 190) {
       lastDraw = t;
       const d = new Date();
+      ex.sim_clock(d.getTime() / 1000);
       const ptr = ex.sim_frame(now(), d.getHours(), d.getMinutes(), d.getSeconds());
       const px = new Uint16Array(memory.buffer, ptr, 800 * 480);
       for (let i = 0; i < px.length; i++) out[i] = lut[px[i]];
