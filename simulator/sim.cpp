@@ -107,6 +107,7 @@ __attribute__((export_name("sim_init"))) void sim_init(uint32_t ms) {
   s.apiOk = true;
   frame = new Canvas(SCREEN_W, SCREEN_H);
   uiInit(&hooks);
+  cfg.darkMode = DARK_ON;                  // the demo starts dark (the board's default is light)
   nowMs = lastPoll = ms;
   demoInit(s, ms);
   for (int i = 0; i < 6; i++) demoStep(s, ms);       // a few breadcrumbs to start with

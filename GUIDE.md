@@ -140,7 +140,7 @@ Open Tools → Serial Monitor at 115200 baud (on the USB port) to see what it's 
 
 ## Browser simulator
 
-The simulator (`docs/simulator.html`, with its `.css`, `.js` and the firmware build `sim.wasm`) runs the firmware's drawing, touch and parsing code in a browser. It's on the project site; to run it locally, serve the folder with `python -m http.server -d docs` and open `http://localhost:8000/simulator.html` (browsers won't load the `.wasm` from a file opened straight from disk). Drag with the mouse, scroll to zoom, click planes. The traffic is simulated, like the board's demo mode.
+The simulator (`docs/simulator.html`, with its `.css`, `.js` and the firmware build `sim.wasm`) runs the firmware's drawing, touch and parsing code in a browser. It's on the project site; to run it locally, serve the folder with `python -m http.server -d docs` and open `http://localhost:8000/simulator.html` (browsers won't load the `.wasm` from a file opened straight from disk). Drag with the mouse, scroll to zoom, click planes. The traffic is simulated, like the board's demo mode, and it starts in dark mode (Settings switches it).
 
 To rebuild it after changing the code:
 
