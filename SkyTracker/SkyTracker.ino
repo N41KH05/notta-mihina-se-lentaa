@@ -583,7 +583,7 @@ void setup() {
   webInit(&state, lock);
   watchdogInit();
   xTaskCreatePinnedToCore(touchTask, "touch", 4096, nullptr, 3, nullptr, 1);
-  xTaskCreatePinnedToCore(fetchLoop, "fetch", 16384, nullptr, 1, &fetchTask, 0);
+  xTaskCreatePinnedToCore(fetchLoop, "fetch", 20480, nullptr, 1, &fetchTask, 0);
   xTaskNotifyGive(fetchTask);
 }
 

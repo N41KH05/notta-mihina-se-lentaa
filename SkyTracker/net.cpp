@@ -1,6 +1,7 @@
 // Live data: plane positions from adsb.fi / airplanes.live / adsb.lol,
 // flight routes from adsbdb.com.
 #include "net.h"
+#include <new>
 #include <esp_task_wdt.h>
 #include <Arduino.h>
 #include <WiFi.h>
@@ -694,8 +695,14 @@ void netFetchPhoto(void* lock) {
   bool ok = false;
   uint8_t* jpg = nullptr;
   size_t len = src[0] ? download(src, &jpg, 400000) : 0;
-  if (len) {
-    JPEGDEC jpeg;
+  // The decoder is an ~18 KB object: far too big for this task's stack, so it lives in PSRAM.
+  static JPEGDEC* dec = nullptr;
+  if (!dec) {
+    void* mem = heap_caps_malloc(sizeof(JPEGDEC), MALLOC_CAP_SPIRAM);
+    if (mem) dec = new (mem) JPEGDEC();
+  }
+  if (len && dec) {
+    JPEGDEC& jpeg = *dec;
     if (jpeg.openRAM(jpg, len, jpegDraw)) {
       decW = jpeg.getWidth();
       decH = jpeg.getHeight();
@@ -712,8 +719,8 @@ void netFetchPhoto(void* lock) {
       }
       jpeg.close();
     }
-    heap_caps_free(jpg);
   }
+  heap_caps_free(jpg);
 
   LOCK(lock);
   if (!strcmp(photo.hex, hex) && photo.state == PHOTO_LOADING) {   // still the same plane?
