@@ -85,12 +85,17 @@ bool boardSdBegin() {
   return SD.begin(255, SPI, 10000000, "/sd", 4);
 }
 
-void boardHardRestart() {
+void boardPanelOff() {
   if (i2cLock) xSemaphoreTake(i2cLock, pdMS_TO_TICKS(200));
-  exio &= ~(EXIO_BL | EXIO_LCD_RST);         // backlight off, panel in reset (the expander
-  exWrite(CH422G_OUT, exio);                 // keeps it there while the chip sleeps)
+  else { Wire.begin(I2C_SDA, I2C_SCL, 400000); exWrite(CH422G_SET, 0x01); }   // before boardInit()
+  exio &= ~(EXIO_BL | EXIO_LCD_RST);
+  exWrite(CH422G_OUT, exio);
+}
+
+void boardDeepRestart(uint32_t ms) {
+  boardPanelOff();
   delay(50);
-  esp_sleep_enable_timer_wakeup(1000000);    // wake in 1 s: a fresh start, like after a power cut
+  esp_sleep_enable_timer_wakeup((uint64_t)ms * 1000);
   esp_deep_sleep_start();
 }
 

@@ -469,29 +469,42 @@ bool isNightHour() {
 //  Staying up for months: watchdog, Wi-Fi recovery, memory check, daily restart
 // ---------------------------------------------------------------------------
 // Why the board last started (shown on the phone settings page, in the current language).
-// Every restart goes through a short deep sleep (boardHardRestart), so the chip reports
-// "woke from deep sleep". The real reason is kept here across it.
+// Restarts happen in two steps. A normal restart first, so the bootloader picks the build
+// to start (after an update: the new one). That build then sleeps for half a second with
+// the screen held in reset: waking from deep sleep restarts the chip much like a power cut,
+// which clears the lines a plain restart can leave on the screen. (Deep sleep alone can't
+// be used: waking up, the bootloader starts the build that was running, not a new one.)
+// The real reason for the restart is kept across the sleep.
 RTC_NOINIT_ATTR uint32_t hardMark, hardReason;
-const uint32_t HARD_MAGIC = 0x4A4D5254;
+const uint32_t HARD_SOON = 0x4A4D5254, HARD_DONE = 0x444F4E45;
+#ifdef CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP
+const bool WAKE_SKIPS_CHECKS = true;
+#else
+const bool WAKE_SKIPS_CHECKS = false;
+#endif
 esp_reset_reason_t bootReason = ESP_RST_UNKNOWN;
+static bool runningPending() {
+  esp_ota_img_states_t st;
+  return esp_ota_get_state_partition(esp_ota_get_running_partition(), &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY;
+}
+void cleanRestart() {
+  esp_reset_reason_t r = esp_reset_reason();
+  bool planned = r == ESP_RST_SW && hardMark == HARD_SOON;
+  bool crashed = r == ESP_RST_PANIC || r == ESP_RST_INT_WDT || r == ESP_RST_TASK_WDT || r == ESP_RST_WDT;
+  if (!planned && !crashed) return;
+  // A brand-new build that hasn't proved itself yet: after a crash, leave the decision to
+  // the bootloader (it goes back to the previous build); after a planned restart, waking
+  // from the sleep only works because the bootloader then skips its usual checks.
+  if (runningPending() && (crashed || !WAKE_SKIPS_CHECKS)) { hardMark = 0; return; }
+  if (crashed) hardReason = r;
+  hardMark = HARD_DONE;
+  boardDeepRestart(500);
+}
 void readBootReason() {
   esp_reset_reason_t r = esp_reset_reason();
-  if (r == ESP_RST_DEEPSLEEP && hardMark == HARD_MAGIC) r = (esp_reset_reason_t)hardReason;
+  if (r == ESP_RST_DEEPSLEEP && hardMark == HARD_DONE) r = (esp_reset_reason_t)hardReason;
   hardMark = 0;
   bootReason = r;
-}
-// After a crash or a watchdog reset, restart once more the hard way: those resets also
-// leave the screen feed in a bad state. Not for a build that hasn't proved itself yet:
-// restarting it again before it is confirmed would make the bootloader roll it back.
-void hardenCrashRestart() {
-  esp_reset_reason_t r = esp_reset_reason();
-  if (r != ESP_RST_PANIC && r != ESP_RST_INT_WDT && r != ESP_RST_TASK_WDT && r != ESP_RST_WDT) return;
-  esp_ota_img_states_t st;
-  if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY) return;
-  hardMark = HARD_MAGIC;
-  hardReason = r;
-  esp_sleep_enable_timer_wakeup(500000);
-  esp_deep_sleep_start();
 }
 const char* resetReasonText() {
   switch (bootReason) {
@@ -515,10 +528,15 @@ const uint32_t QUIET_MAGIC = 0x51E7BEEF;
 void restartNow(const char* why, bool quiet) {
   Serial.printf("Restarting: %s\n", why);
   quietRestart = quiet ? QUIET_MAGIC : 0;
-  hardMark = HARD_MAGIC;
+  // A new build still on probation restarting on purpose (daily restart, low memory...):
+  // count it as working, or the bootloader would take that restart as a failed start.
+  if (runningPending()) esp_ota_mark_app_valid_cancel_rollback();
+  hardMark = HARD_SOON;                // the next start sleeps briefly first (cleanRestart)
   hardReason = ESP_RST_SW;
   delay(200);
-  boardHardRestart();                  // not ESP.restart(): that can leave the screen streaked
+  boardPanelOff();
+  delay(50);
+  ESP.restart();
 }
 
 // ---------------------------------------------------------------------------
@@ -743,7 +761,7 @@ void setup() {
   delay(300);
   Serial.println("SkyTracker starting");
   if (!psramFound()) Serial.println("!! No PSRAM found: set Tools > PSRAM to 'OPI PSRAM'");
-  hardenCrashRestart();
+  cleanRestart();
   readBootReason();
   bool quiet = quietRestart == QUIET_MAGIC && bootReason == ESP_RST_SW;
   quietRestart = 0;

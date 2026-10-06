@@ -8,9 +8,13 @@ uint16_t* boardBackBuffer();       // frame buffer to draw the next frame into
 const uint16_t* boardFrontBuffer();  // the frame on screen now
 void boardPresent();               // show it (tear-free) and swap buffers
 void boardBacklight(bool on);
-// Restart with the screen held in reset: deep sleep for a second, then a full start-up.
-// Needed after flash writes (updates): a plain restart could leave the picture streaked.
-[[noreturn]] void boardHardRestart();
+// Backlight off and the panel held in reset (the expander keeps it so through a restart).
+// Works before boardInit() too.
+void boardPanelOff();
+// Deep sleep for ms, then a full start-up with the panel reset: the closest the firmware
+// gets to a power cut. Note: waking from deep sleep starts the build that was running
+// (the bootloader skips its normal choice), so this can't be used to start a new build.
+[[noreturn]] void boardDeepRestart(uint32_t ms);
 
 int boardTouch(TouchPt* pts, int max);
 // Mount the micro SD card (SPI on GPIO 11-13; its chip select is on the I/O expander).
