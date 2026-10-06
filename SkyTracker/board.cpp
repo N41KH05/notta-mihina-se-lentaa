@@ -136,8 +136,8 @@ bool boardInit() {
   cfg.timings.hsync_back_porch = 8;
   cfg.timings.hsync_front_porch = 8;
   cfg.timings.vsync_pulse_width = 4;
-  cfg.timings.vsync_back_porch = 16;          // (the values most setups for this board use)
-  cfg.timings.vsync_front_porch = 16;
+  cfg.timings.vsync_back_porch = 8;
+  cfg.timings.vsync_front_porch = 8;
   cfg.timings.flags.pclk_active_neg = 1;
   cfg.data_width = 16;
   cfg.bits_per_pixel = 16;
