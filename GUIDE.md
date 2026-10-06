@@ -55,7 +55,7 @@ Once it's connected it asks **Where is home?** Home is the centre of the map and
 - After 5 minutes without a touch it goes back to the home view, unless a plane is selected: its details and path stay until you close them or the plane leaves the data.
 - Dark mode swaps the colours for amber and green on black. In Settings, **Off** keeps the light colours, **On** keeps the dark ones, and **Auto** switches at sunset and back at sunrise at your home location (it needs the clock, so it stays light until Wi-Fi has set the time).
 - At night (23–07 unless you change it) the screen turns off, since the backlight can't be dimmed. A tap wakes it.
-- The position services return planes within 250 nm of a point. Zoom out further and you'll see a dotted circle marking that limit.
+- The position services only answer for a circle of 250 nm (460 km) at a time, so a wider view is covered with several circles, fetched a few per update, nearest the middle first. Zoomed out that far, the planes away from the middle refresh about once a minute and glide along their course in between. Up to 16 circles are used, enough for the Nordic countries and the Baltic; zoom out further and a dotted line shows the area that's covered.
 
 ## Departure and arrival times
 

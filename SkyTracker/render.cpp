@@ -1089,20 +1089,22 @@ static void drawFlightPath(Adafruit_GFX& g, AppState& s) {
 }
 
 static void drawCoverage(Adafruit_GFX& g, AppState& s) {
-  if (s.fetchRadiusNm < 250 || s.demo) return;
-  double lat = latFromY(s.fetchCy);
-  float r = 250 * 1852 / cos(lat * M_PI / 180) / V_MPP, cx = sx(s.fetchCx), cy = sy(s.fetchCy);
-  const float corners[4][2] = {{0, 0}, {MAP_W, 0}, {0, H}, {MAP_W, H}};
-  bool covered = true;
-  for (auto& c : corners)
-    if (hypotf(c[0] - cx, c[1] - cy) >= r) covered = false;
-  if (covered) return;
-  for (int i = 0; i < 360; i += 2) {
-    float a = i * 0.0174533f;
-    g.fillRect(rnd(cx + r * sinf(a)) - 1, rnd(cy - r * cosf(a)) - 1, 3, 3, C_PRIMARY);
+  // Zoomed out so far that the requests can't cover the whole view (net.cpp): a dotted
+  // line round the area whose planes are shown.
+  if (!s.coverCapped || s.demo) return;
+  float x0 = sx(s.covX0), x1 = sx(s.covX1), y0 = sy(s.covY1), y1 = sy(s.covY0);   // (y grows down)
+  if (x0 <= 0 && x1 >= MAP_W && y0 <= 0 && y1 >= H) return;          // it all fits after all
+  for (float x = x0; x <= x1; x += 6) {
+    if (x < 0 || x >= MAP_W) continue;
+    if (y0 >= 0 && y0 < H) g.fillRect(rnd(x) - 1, rnd(y0) - 1, 3, 3, C_PRIMARY);
+    if (y1 >= 0 && y1 < H) g.fillRect(rnd(x) - 1, rnd(y1) - 1, 3, 3, C_PRIMARY);
   }
-  const char* t = units.distKm ? TR("Koneet 460 km:n säteellä keskipisteestä", "Aircraft within 460 km of the centre")
-                               : TR("Koneet 250 nm:n säteellä keskipisteestä", "Aircraft within 250 nm of the centre");
+  for (float y = y0; y <= y1; y += 6) {
+    if (y < 0 || y >= H) continue;
+    if (x0 >= 0 && x0 < MAP_W) g.fillRect(rnd(x0) - 1, rnd(y) - 1, 3, 3, C_PRIMARY);
+    if (x1 >= 0 && x1 < MAP_W) g.fillRect(rnd(x1) - 1, rnd(y) - 1, 3, 3, C_PRIMARY);
+  }
+  const char* t = TR("Koneet katkoviivan sisältä", "Aircraft inside the dotted line");
   int w = textW(B12, t);
   int nx = 312 - w / 2, ny = H - 34;     // bottom centre, between the scale bar and the buttons
   g.fillRoundRect(nx - 8, ny, w + 16, 22, 5, C_BAR);

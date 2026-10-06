@@ -169,8 +169,10 @@ struct AppState {
   bool apiOk;
   char apiError[120];
   char source[16];
-  float fetchCx, fetchCy;
-  int fetchRadiusNm;
+  // What the traffic requests cover. A wide view is covered by several circles (net.cpp);
+  // coverCapped: there were too many, and only the area cov* (mercator metres) is shown.
+  bool coverCapped;
+  float covX0, covY0, covX1, covY1;
   bool demo;
   bool night;
   bool wifiDown;          // the saved network can't be reached (being retried)
@@ -199,7 +201,7 @@ struct AppState {
       if (!p.hasGs || !p.hasTrack) { p.x = p.fx; p.y = p.fy; continue; }
       float age = (int32_t)(nowMs - p.tMs) / 1000.0f;
       if (age < 0) age = 0;
-      if (age > 60) age = 60;
+      if (age > 120) age = 120;           // (a wide view refreshes each area every minute or so)
       float c = cosf(p.lat * 0.0174533f);
       float v = p.gs * 0.514444f / (c < 0.1f ? 0.1f : c);
       float a = p.track * 0.0174533f;

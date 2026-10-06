@@ -91,7 +91,8 @@
 #define TIMES_REFRESH_MIN   20
 
 #define TRAIL_POINTS    40         // breadcrumbs per plane (40 x 4 s = under 3 min)
-#define MAX_PLANES      400
+// A wide view is covered with several 250 nm circles (one request each, a few per update).
+#define MAX_PLANES      1200
 
 // ---- Logbook ------------------------------------------------------------------------
 // Every aircraft passing within this distance of home is counted and, with a micro SD

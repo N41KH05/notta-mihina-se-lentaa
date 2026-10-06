@@ -2,6 +2,8 @@
 // flight routes from adsbdb.com.
 #include "net.h"
 #include "logbook.h"
+#include "render.h"            // haversineKm
+#include <algorithm>
 #include <esp_task_wdt.h>
 #include <Arduino.h>
 #include <WiFi.h>
@@ -101,21 +103,22 @@ JsonArray reportList(JsonDocument& doc) {
   return doc["ac"].is<JsonArray>() ? doc["ac"].as<JsonArray>() : doc["aircraft"].as<JsonArray>();
 }
 
-// Reads the planes of a report into out. If there are more than MAX_PLANES (a wide view
-// over busy airspace), keeps the ones nearest to (cx, cy), the middle of the view.
-int trafficParse(JsonDocument& doc, Plane* out, uint32_t now, float cx, float cy) {
+// Reads the planes of a report into out, at most limit of them. If there are more (a wide
+// view over busy airspace), keeps the ones nearest to (cx, cy), the middle of the view.
+int trafficParse(JsonDocument& doc, Plane* out, uint32_t now, float cx, float cy, int limit) {
   static float dist[MAX_PLANES];
   static Plane tmp;
+  if (limit > MAX_PLANES) limit = MAX_PLANES;
   int n = 0, far = -1;                       // far: the kept plane furthest from the centre
   for (JsonObject a : reportList(doc)) {
     if (!readPlane(a, tmp, now)) continue;
     float d = (tmp.fx - cx) * (tmp.fx - cx) + (tmp.fy - cy) * (tmp.fy - cy);
     int slot;
-    if (n < MAX_PLANES) slot = n++;
+    if (n < limit) slot = n++;
     else if (d < dist[far]) slot = far;      // closer than the furthest one kept: replace it
     else continue;
     dist[slot] = d;
-    if (n == MAX_PLANES && (far < 0 || slot == far)) {
+    if (n == limit && (far < 0 || slot == far)) {
       far = 0;
       for (int i = 1; i < n; i++) if (dist[i] > dist[far]) far = i;
     }
@@ -125,9 +128,9 @@ int trafficParse(JsonDocument& doc, Plane* out, uint32_t now, float cx, float cy
 }
 
 // Finds planes of the previous report by their hex code in one pass instead of
-// searching the whole list for each new plane (up to 400 x 400 string compares).
+// searching the whole list for each new plane.
 namespace {
-const int HASH_SIZE = 1024;                  // power of two, > 2 x MAX_PLANES
+const int HASH_SIZE = 4096;                  // power of two, > 2 x MAX_PLANES
 uint32_t hexKey(const char* h) {
   uint32_t k = 2166136261u;                  // FNV-1a
   for (; *h; h++) k = (k ^ (uint8_t)*h) * 16777619u;
@@ -135,40 +138,45 @@ uint32_t hexKey(const char* h) {
 }
 }  // namespace
 
-void trafficMerge(AppState& s, Plane*& incoming, int n) {
+// A fresh report for the circle of radiusKm around (lat, lon). Planes in it replace the
+// old list's (keeping their trails). Planes the circle doesn't reach stay, still gliding
+// along their last track, until their own circle's turn comes (at most keepMs). The selected
+// plane stays for up to 90 s even if a report missed it.
+void trafficMergeArea(AppState& s, Plane*& incoming, int n, double lat, double lon, double radiusKm, uint32_t keepMs) {
   static int16_t slot[HASH_SIZE];
+  static uint8_t used[MAX_PLANES];
   memset(slot, 0xFF, sizeof slot);           // -1: empty
+  memset(used, 0, sizeof used);
   for (int i = 0; i < s.nPlanes; i++) {
     uint32_t h = hexKey(s.planes[i].hex) & (HASH_SIZE - 1);
     while (slot[h] >= 0) h = (h + 1) & (HASH_SIZE - 1);
     slot[h] = i;
   }
-  auto findOld = [&](const char* hex) -> Plane* {
+  auto findOld = [&](const char* hex) -> int {
     for (uint32_t h = hexKey(hex) & (HASH_SIZE - 1); slot[h] >= 0; h = (h + 1) & (HASH_SIZE - 1))
-      if (!strcmp(s.planes[slot[h]].hex, hex)) return &s.planes[slot[h]];
-    return nullptr;
+      if (!strcmp(s.planes[slot[h]].hex, hex)) return slot[h];
+    return -1;
   };
   for (int i = 0; i < n; i++) {
     Plane& p = incoming[i];
-    Plane* old = findOld(p.hex);
-    if (old) {
-      p.trailN = old->trailN;
-      p.trailHead = old->trailHead;
-      memcpy(p.trail, old->trail, sizeof p.trail);
+    int o = findOld(p.hex);
+    if (o >= 0) {
+      const Plane& old = s.planes[o];
+      p.trailN = old.trailN;
+      p.trailHead = old.trailHead;
+      memcpy(p.trail, old.trail, sizeof p.trail);
+      used[o] = 1;
     }
     p.addTrail(p.fx, p.fy);
   }
-  // The selected plane missing from this report (the view moved away from it, it fell
-  // out of the nearest 400, or one report simply missed it): keep it, still gliding
-  // along its last track, for up to 90 s rather than dropping the selection and its path.
-  if (s.selHex[0]) {
-    bool found = false;
-    for (int i = 0; i < n && !found; i++) found = !strcmp(incoming[i].hex, s.selHex);
-    Plane* old = found ? nullptr : findOld(s.selHex);
-    if (old && (int32_t)(millis() - old->tMs) < 90000) {
-      int slot = n < MAX_PLANES ? n++ : n - 1;
-      incoming[slot] = *old;
-    }
+  uint32_t now = millis();
+  for (int i = 0; i < s.nPlanes && n < MAX_PLANES; i++) {
+    if (used[i]) continue;
+    const Plane& old = s.planes[i];
+    uint32_t age = now - old.tMs;
+    bool sel = s.selHex[0] && !strcmp(old.hex, s.selHex);
+    bool inside = haversineKm(lat, lon, old.lat, old.lon) < radiusKm * 0.97;
+    if (sel ? age < 90000 : (!inside && age < keepMs)) incoming[n++] = old;
   }
   Plane* t = s.planes;
   s.planes = incoming;
@@ -177,18 +185,83 @@ void trafficMerge(AppState& s, Plane*& incoming, int n) {
   if (s.selHex[0] && !s.find(s.selHex)) { s.selHex[0] = 0; s.follow = false; }
 }
 
-int trafficRadiusNm(const AppState& s) {
+// ---- Which circles to ask for --------------------------------------------------------
+struct Tile { double lat, lon; int radiusNm; };
+const int MAX_TILES = 16, TILES_PER_ROUND = 3;   // circles at most; asked for per update
+// The services answer for a circle of up to 250 nm. A view that fits in one is asked for
+// in one request (reaching the logbook circle around home too, if it can). A wider one is
+// covered with a grid of circles, each square of the grid inside its circle. The grid is
+// lined up on home when home is in view, so one circle always holds the logbook circle.
+// At most MAX_TILES circles, nearest the middle of the view first; past that only their
+// area is shown (and outlined on the map).
+int planTiles(const AppState& s, Tile* out, bool* capped, float cov[4]) {
   float x0, y0, x1, y1;
   s.viewBounds(60, x0, y0, x1, y1);
-  double lat = latFromY(s.cy);
-  double halfDiag = hypot(x1 - x0, y1 - y0) / 2 * cos(lat * M_PI / 180);
-  int radius = (int)ceil(halfDiag / 1852);
-  if (radius < 5) radius = 5;
-  if (radius > 250) radius = 250;
-  // Reach the whole logbook circle around home too, if the services allow it.
-  int reach = (int)ceil(logbookReachKm(lat, lonFromX(s.cx)) / 1.852);
-  if (reach > radius && reach <= 250) radius = reach;
-  return radius;
+  double lat = latFromY(s.cy), lon = lonFromX(s.cx);
+  double halfDiagNm = hypot(x1 - x0, y1 - y0) / 2 * cos(lat * M_PI / 180) / 1852;
+  *capped = false;
+  cov[0] = x0; cov[1] = y0; cov[2] = x1; cov[3] = y1;
+  if (halfDiagNm <= 250) {
+    int radius = (int)ceil(halfDiagNm);
+    if (radius < 5) radius = 5;
+    int reach = (int)ceil(logbookReachKm(lat, lon) / 1.852);
+    if (reach > radius && reach <= 250) radius = reach;
+    out[0] = {lat, lon, radius};
+    return 1;
+  }
+  const double side = 250 * 1852 * 1.41421356 * 0.92;   // the square inside a 250 nm circle, real metres
+  float hx = mercX(cfg.homeLon), hy = mercY(cfg.homeLat);
+  bool homeIn = hx >= x0 && hx <= x1 && hy >= y0 && hy <= y1;
+  float ox = homeIn ? hx : s.cx, oy = homeIn ? hy : s.cy;
+  struct Cand { float x, y, d; };
+  static Cand cand[400];
+  int n = 0;
+  auto stepAt = [&](float y) { return (float)(side / cos(latFromY(y) * M_PI / 180)); };
+  // The grid squares that touch the area a0..a1 (mercator metres).
+  auto grid = [&](float ax0, float ay0, float ax1, float ay1) {
+    n = 0;
+    auto addRow = [&](float y, float hh) {
+      if (fabs(latFromY(y)) > 84) return;
+      // columns spaced for the row's edge nearest the equator (where they are furthest apart)
+      double edge = fmin(fabs(latFromY(y - hh)), fabs(latFromY(y + hh)));
+      float step = (float)(side / cos(edge * M_PI / 180));
+      int i0 = (int)floorf((ax0 - ox) / step - 0.5f), i1 = (int)ceilf((ax1 - ox) / step + 0.5f);
+      for (int i = i0; i <= i1 && n < 400; i++) {
+        float x = ox + i * step;
+        if (x + step / 2 < ax0 || x - step / 2 > ax1) continue;
+        cand[n++] = {x, y, hypotf(x - s.cx, y - s.cy)};
+      }
+    };
+    for (float y = oy;;) {                     // the origin's row and those north of it
+      float hh = stepAt(y) / 2;
+      if (y - hh > ay1) break;
+      if (y + hh >= ay0) addRow(y, hh);
+      y += stepAt(y + hh);
+      if (y > 2.0e7f) break;
+    }
+    for (float y = oy;;) {                     // and south
+      y -= stepAt(y - stepAt(y) / 2);
+      if (y < -2.0e7f) break;
+      float hh = stepAt(y) / 2;
+      if (y + hh < ay0) break;
+      if (y - hh <= ay1) addRow(y, hh);
+    }
+  };
+  // Too many circles for the whole view: a smaller area round the middle, shrunk until
+  // its circles fit in MAX_TILES. That area is then shown, and outlined on the map.
+  float f = 1;
+  grid(x0, y0, x1, y1);
+  while (n > MAX_TILES && f > 0.05f) {
+    f *= 0.92f;
+    cov[0] = s.cx - (s.cx - x0) * f; cov[2] = s.cx + (x1 - s.cx) * f;
+    cov[1] = s.cy - (s.cy - y0) * f; cov[3] = s.cy + (y1 - s.cy) * f;
+    grid(cov[0], cov[1], cov[2], cov[3]);
+    *capped = true;
+  }
+  std::sort(cand, cand + n, [](const Cand& a, const Cand& b) { return a.d < b.d; });
+  if (n > MAX_TILES) n = MAX_TILES;
+  for (int i = 0; i < n; i++) out[i] = {latFromY(cand[i].y), lonFromX(cand[i].x), 250};
+  return n;
 }
 
 void routeFilter(JsonDocument& filter) {
@@ -384,52 +457,83 @@ void netInit() {
 }
 
 void netFetchPlanes(AppState& s, void* lock) {
-  // Which area? Everything the map shows (the services answer up to 250 nm).
+  // Which area? Everything the map shows: one circle, or a few of the grid's circles per
+  // update (planTiles), nearest the middle of the view first.
+  static Tile tiles[MAX_TILES];
+  static int nTiles = 0, next = 0;
+  static float planCx = NAN, planCy = NAN;
+  static int planZoom = -1;
+  bool capped;
+  float cov[4];
   LOCK(lock);
-  int radius = trafficRadiusNm(s);
+  Tile plan[MAX_TILES];
+  int nPlan = planTiles(s, plan, &capped, cov);
+  bool moved = s.zoom != planZoom || fabsf(s.cx - planCx) > 2 * metresPerPx(s.zoom) || fabsf(s.cy - planCy) > 2 * metresPerPx(s.zoom);
+  if (moved || nPlan != nTiles) {               // a new view: start again from the middle
+    memcpy(tiles, plan, sizeof(Tile) * nPlan);
+    nTiles = nPlan;
+    next = 0;
+    planCx = s.cx;
+    planCy = s.cy;
+    planZoom = s.zoom;
+  }
+  s.coverCapped = capped;
+  s.covX0 = cov[0]; s.covY0 = cov[1]; s.covX1 = cov[2]; s.covY1 = cov[3];
   float cx = s.cx, cy = s.cy;
   UNLOCK(lock);
-  double lat = latFromY(cy), lon = lonFromX(cx);
 
   JsonDocument filter;
   trafficFilter(filter);
-
-  // Try the service that worked last time first, then the others.
+  // With several circles each keeps its nearest share, so the whole view gets some.
+  int limit = MAX_PLANES / nTiles;
+  int rounds = nTiles < TILES_PER_ROUND ? nTiles : TILES_PER_ROUND;
+  bool anyOk = false;
   char errors[120] = "";
-  int status = -1;
-  JsonDocument doc(&psram);
-  int used = sourceIdx;
-  for (int i = 0; i < N_SOURCES; i++) {
-    used = (sourceIdx + i) % N_SOURCES;
-    char url[160], err[48] = "";
-    snprintf(url, sizeof url, SOURCES[used].url, lat, lon, radius);
+  int total = 0;
+  for (int k = 0; k < rounds; k++) {
+    const Tile& t = tiles[(next + k) % nTiles];
+    // Try the service that worked last time first, then the others.
+    int status = -1;
+    JsonDocument doc(&psram);
+    int used = sourceIdx;
+    errors[0] = 0;
+    for (int i = 0; i < N_SOURCES; i++) {
+      used = (sourceIdx + i) % N_SOURCES;
+      char url[160], err[48] = "";
+      snprintf(url, sizeof url, SOURCES[used].url, t.lat, t.lon, t.radiusNm);
+      doc.clear();
+      status = getJson(url, doc, filter, err, sizeof err);
+      if (status == 200) break;
+      size_t n = strlen(errors);
+      snprintf(errors + n, sizeof errors - n, "%s%s: %s", n ? "; " : "", SOURCES[used].name, err);  // shown on screen
+    }
+    if (status != 200) continue;
+    if (used != sourceIdx) Serial.printf("Using %s for live data\n", SOURCES[used].name);
+    sourceIdx = used;
+    // one circle: the planes nearest the middle of the view; several: each its own share,
+    // nearest its own centre, so the planes are spread over the whole view
+    float px = nTiles == 1 ? cx : mercX(t.lon), py = nTiles == 1 ? cy : mercY(t.lat);
+    int n = trafficParse(doc, incoming, millis(), px, py, limit);
     doc.clear();
-    status = getJson(url, doc, filter, err, sizeof err);
-    if (status == 200) break;
-    size_t n = strlen(errors);
-    snprintf(errors + n, sizeof errors - n, "%s%s: %s", n ? "; " : "", SOURCES[used].name, err);  // shown on screen
+    total += n;
+    anyOk = true;
+    LOCK(lock);
+    logbookObserve(incoming, n, t.lat, t.lon, t.radiusNm * 1.852, (uint32_t)time(nullptr));
+    trafficMergeArea(s, incoming, n, t.lat, t.lon, t.radiusNm * 1.852, nTiles == 1 ? 75000 : 120000);
+    pathFollow(s);                           // the selected plane's path grows with it
+    s.updatedEpoch = time(nullptr);
+    UNLOCK(lock);
   }
-  if (status == 200 && used != sourceIdx) Serial.printf("Using %s for live data\n", SOURCES[used].name);
-  if (status == 200) sourceIdx = used;
-
-  int n = status == 200 ? trafficParse(doc, incoming, millis(), cx, cy) : 0;
+  next = nTiles ? (next + rounds) % nTiles : 0;
 
   LOCK(lock);
-  s.apiOk = status == 200;
-  snprintf(s.apiError, sizeof s.apiError, "%s", s.apiOk ? "" : errors);
+  s.apiOk = anyOk;
+  snprintf(s.apiError, sizeof s.apiError, "%s", anyOk ? "" : errors);
   snprintf(s.source, sizeof s.source, "%s", SOURCES[sourceIdx].name);
-  s.fetchCx = cx;
-  s.fetchCy = cy;
-  s.fetchRadiusNm = radius;
-  if (s.apiOk) {
-    logbookObserve(incoming, n, lat, lon, radius * 1.852, (uint32_t)time(nullptr));
-    trafficMerge(s, incoming, n);
-    pathFollow(s);                         // the selected plane's path grows with it
-    s.updatedEpoch = time(nullptr);
-  }
+  int shown = s.nPlanes;
   UNLOCK(lock);
-  Serial.printf("%d planes (%s), free PSRAM %u KB\n", n, s.apiOk ? SOURCES[sourceIdx].name : "failed",
-                (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+  Serial.printf("%d planes from %d of %d circles, %d kept (%s), free PSRAM %u KB\n", total, rounds, nTiles, shown,
+                anyOk ? SOURCES[sourceIdx].name : "failed", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 }
 
 void netLookupRoute(AppState& s, void* lock) {
