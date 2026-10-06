@@ -106,15 +106,15 @@ void shiftBase(int dx, int dy) {
   if (abs(baseOffX) >= MAP_W || abs(baseOffY) >= SCREEN_H) baseStale = true;
 }
 static void fill16(uint16_t* p, int n, uint16_t c) { while (n--) *p++ = c; }
-// Copy the cached background into a frame, with the map part moved by the drag offset.
+// Copy the cached map into a frame, moved by the drag offset. Only the map part: the
+// side panel is drawn over completely every frame, so copying it would be wasted
+// PSRAM traffic (which the LCD needs for itself).
 static void composeBase(uint16_t* dst) {
   const int ox = baseOffX, oy = baseOffY;
-  if (!ox && !oy) { memcpy(dst, baseBuf, SCREEN_W * SCREEN_H * 2); return; }
   const uint16_t sea = baseBuf[0];   // corner pixel is (nearly always) sea colour
   int x0 = ox > 0 ? ox : 0, x1 = ox < 0 ? MAP_W + ox : MAP_W;   // columns the old map covers
   for (int y = 0; y < SCREEN_H; y++) {
     uint16_t* d = dst + y * SCREEN_W;
-    memcpy(d + MAP_W, baseBuf + y * SCREEN_W + MAP_W, (SCREEN_W - MAP_W) * 2);   // side panel
     int sy = y - oy;
     if (sy < 0 || sy >= SCREEN_H) { fill16(d, MAP_W, sea); continue; }
     fill16(d, x0, sea);
@@ -150,8 +150,11 @@ void drawFrame() {
   renderOverlay(canvas, state, millis(), haveTime ? &now : nullptr, u > 100000 ? &upd : nullptr);
   xSemaphoreGive(lock);
   boardPresent();
+  // Realign the LCD stream after heavy redraws, and every few seconds anyway: network
+  // work (TLS, big downloads) also loads PSRAM, and a slipped picture shouldn't stay.
   static uint32_t lastResync = 0;
-  if (resync && millis() - lastResync > 500) {   // not every frame when following a plane
+  uint32_t since = millis() - lastResync;
+  if ((resync && since > 500) || since > 3000) {
     lastResync = millis();
     boardResync();
   }

@@ -111,7 +111,7 @@ bool boardInit() {
   cfg.data_width = 16;
   cfg.bits_per_pixel = 16;
   cfg.num_fbs = 2;
-  cfg.bounce_buffer_size_px = W * 16;     // more slack while the CPU is busy with PSRAM
+  cfg.bounce_buffer_size_px = W * 20;     // more slack while the CPU is busy with PSRAM
   cfg.dma_burst_size = 64;
   cfg.hsync_gpio_num = 46;
   cfg.vsync_gpio_num = 3;
