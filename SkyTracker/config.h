@@ -62,11 +62,12 @@
 #define BUSY_PLANES     250        //   big downloads; the planes keep gliding in between
 #define FRAME_MS        250        // planes glide between fetches: redraw this often
 #define FRAME_MS_TOUCH  50         // while a finger moves the map: at most 20 frames a second
-// The screen has no memory of its own: the ESP32 sends it the whole picture ~30 times a
-// second from PSRAM, over the same bus the program code is read from. 12 MHz is the
-// lowest this panel accepts: at 10 it doesn't see a valid signal and runs its own colour
-// self-test instead. (16 is Waveshare's value but loads the bus more.)
-#define LCD_PCLK_MHZ    12
+// The screen has no memory of its own: the ESP32 sends it the whole picture ~38 times a
+// second from PSRAM. 16 MHz is Waveshare's own value. Lower values load the memory bus
+// less, but the panel's input is then near its limit (at 10 it doesn't see a signal at
+// all, and at 12 it now and then locked on wrongly at start-up and showed lines until
+// the power was cut).
+#define LCD_PCLK_MHZ    16
 #define HIDE_ON_GROUND  true
 
 // ---- Plane photos (Planespotters.net) -----------------------------------------------
