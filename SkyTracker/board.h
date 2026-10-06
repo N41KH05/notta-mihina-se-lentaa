@@ -8,5 +8,8 @@ uint16_t* boardBackBuffer();       // frame buffer to draw the next frame into
 const uint16_t* boardFrontBuffer();  // the frame on screen now
 void boardPresent();               // show it (tear-free) and swap buffers
 void boardBacklight(bool on);
+// Restart with the screen held in reset: deep sleep for a second, then a full start-up.
+// Needed after flash writes (updates): a plain restart could leave the picture streaked.
+[[noreturn]] void boardHardRestart();
 
 int boardTouch(TouchPt* pts, int max);   // current touch points (0 = none)

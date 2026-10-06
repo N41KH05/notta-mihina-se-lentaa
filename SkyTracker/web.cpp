@@ -13,6 +13,7 @@
 
 void webSaved(bool homeMoved, bool keyChanged);   // SkyTracker.ino: store and apply
 const char* resetReasonText();                    // SkyTracker.ino: why it last started
+void restartNow(const char* why, bool quiet);     // SkyTracker.ino
 uint32_t uptimeMinutes();
 
 extern TaskHandle_t fetchTask;      // SkyTracker.ino: woken for "update now"
@@ -445,7 +446,7 @@ void handleRestart() {
                   TR("Käynnistetään uudelleen… Sivu latautuu hetken kuluttua.",
                      "Restarting… The page will reload in a moment.") + "</body>");
   delay(500);
-  ESP.restart();
+  restartNow("restart from the phone page", false);
 }
 }  // namespace
 

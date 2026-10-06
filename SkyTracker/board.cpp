@@ -2,6 +2,7 @@
 // Pin numbers and timings are from Waveshare's own board definition
 // (ESP32_Display_Panel: BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_7).
 #include "board.h"
+#include <esp_sleep.h>
 #include "config.h"
 #include <Arduino.h>
 #include <Wire.h>
@@ -68,6 +69,15 @@ bool IRAM_ATTR onFrameDone(esp_lcd_panel_handle_t, const esp_lcd_rgb_panel_event
 
 }  // namespace
 
+void boardHardRestart() {
+  if (i2cLock) xSemaphoreTake(i2cLock, pdMS_TO_TICKS(200));
+  exio &= ~(EXIO_BL | EXIO_LCD_RST);         // backlight off, panel in reset (the expander
+  exWrite(CH422G_OUT, exio);                 // keeps it there while the chip sleeps)
+  delay(50);
+  esp_sleep_enable_timer_wakeup(1000000);    // wake in 1 s: a fresh start, like after a power cut
+  esp_deep_sleep_start();
+}
+
 bool boardInit() {
   i2cLock = xSemaphoreCreateMutex();
   frameDone = xSemaphoreCreateBinary();
@@ -77,9 +87,9 @@ bool boardInit() {
   exWrite(CH422G_SET, 0x01);
   exWrite(CH422G_OUT, exio);
   exSet(EXIO_LCD_RST, false);
-  delay(10);
+  delay(50);
   exSet(EXIO_LCD_RST, true);
-  delay(100);
+  delay(120);
 
   // Touch reset; holding INT low during reset selects I2C address 0x5D.
   pinMode(TP_INT, OUTPUT);
