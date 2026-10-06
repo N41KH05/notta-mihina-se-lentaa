@@ -118,25 +118,28 @@ const char* signalWord(int rssi) {
 }
 
 const char STYLE[] PROGMEM = R"CSS(
-:root{--navy:#162442;--accent:#e23a5e;--bg:#eef1f6;--card:#fff;--text:#1c202c;--text2:#686e7c;--line:#d6dae2;--good:#22a05a;--bad:#d61e1e}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1420;--card:#1a2130;--text:#e8ebf2;--text2:#9aa2b4;--line:#2c3547;--navy:#3a5a9a}}
+:root{--bg:#0b1016;--card:#141d24;--field:#0b1016;--text:#e4ebe6;--text2:#9aa8a4;--line:#24323a;--line2:#2f3f47;--amber:#ffb239;--green:#6ae28b;--good:#6ae28b;--bad:#ff6b5e;color-scheme:dark}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-header{background:#162442;color:#fff;padding:18px 16px}header h1{margin:0;font-size:22px;letter-spacing:.5px}header p{margin:2px 0 0;opacity:.75;font-size:14px}
+header{background:#080c08;border-bottom:1px solid var(--line);padding:14px 16px;display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+header h1{margin:0;font-size:19px;font-weight:700;color:var(--green)}
+header p{margin:0;font:600 12px ui-monospace,Menlo,Consolas,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--amber)}
 main{max-width:560px;margin:0 auto;padding:12px 16px 32px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:12px 0}
-h2{font-size:13px;letter-spacing:.8px;text-transform:uppercase;color:var(--text2);margin:0 0 10px}
-dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0}dt{color:var(--text2)}dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0}
+h2{font:600 12px ui-monospace,Menlo,Consolas,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--amber);margin:0 0 10px}
+dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0}dt{color:var(--text2)}dd{margin:0;font-weight:600;color:var(--amber);overflow-wrap:anywhere}
 label.f{display:block;font-size:14px;color:var(--text2);margin:10px 0 4px}
-input[type=text],input[type=email],input[type=password],select{width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--text)}
+input[type=text],input[type=email],input[type=password],select{width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line2);border-radius:8px;background:var(--field);color:var(--text)}
+input:focus,select:focus{outline:2px solid var(--amber);outline-offset:1px}
 .row{display:flex;gap:10px}.row>*{flex:1}
-.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:4px}.seg input{display:none}
-.seg label{flex:1;text-align:center;padding:9px 4px;cursor:pointer;font-weight:600;color:var(--navy)}
-.seg input:checked+label{background:#162442;color:#fff}
-.chk{display:flex;align-items:center;gap:10px;margin:6px 0;font-weight:600}.chk input{width:20px;height:20px}
+.seg{display:flex;gap:6px;margin-bottom:4px}.seg input{display:none}
+.seg label{flex:1;text-align:center;padding:9px 4px;cursor:pointer;font-weight:700;color:var(--amber);border:1px solid var(--line2);border-radius:8px;background:var(--field)}
+.seg input:checked+label{color:var(--green);border-color:var(--green);background:rgba(106,226,139,.10)}
+.chk{display:flex;align-items:center;gap:10px;margin:6px 0;font-weight:600}.chk input{width:20px;height:20px;accent-color:var(--green)}
 .help{font-size:13px;color:var(--text2);margin:8px 0 0}
-.msg{border-radius:10px;padding:12px 14px;margin:12px 0;font-weight:600}.ok{background:#e3f5ea;color:#16663a}.err{background:#fde8e8;color:#9b1c1c}
-button{width:100%;font:inherit;font-weight:700;padding:14px;border-radius:10px;border:0;cursor:pointer}
-.save{background:var(--accent);color:#fff;margin-top:4px}.ghost{background:transparent;color:var(--text2);border:1px solid var(--line);margin-top:12px}
+.msg{border-radius:10px;padding:12px 14px;margin:12px 0;font-weight:600;border:1px solid}.ok{background:rgba(106,226,139,.10);color:var(--green);border-color:rgba(106,226,139,.4)}.err{background:rgba(255,107,94,.10);color:var(--bad);border-color:rgba(255,107,94,.4)}
+button{width:100%;font:inherit;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:14px;border-radius:10px;border:0;cursor:pointer}
+.save{background:var(--amber);color:#15110a;margin-top:4px}.ghost{background:transparent;color:var(--green);border:1px solid var(--green);margin-top:12px}
+a{color:var(--amber)}
 footer{font-size:12px;color:var(--text2);text-align:center;margin-top:24px}
 )CSS";
 
@@ -438,7 +441,7 @@ void handleRestart() {
   securityHeaders();
   server.send(200, "text/html; charset=utf-8",
               String("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
-                     "<meta http-equiv=refresh content='20;url=/'><body style='font:18px system-ui;padding:24px'>") +
+                     "<meta http-equiv=refresh content='20;url=/'><body style='font:18px system-ui;padding:24px;background:#0b1016;color:#6ae28b'>") +
                   TR("Käynnistetään uudelleen… Sivu latautuu hetken kuluttua.",
                      "Restarting… The page will reload in a moment.") + "</body>");
   delay(500);
