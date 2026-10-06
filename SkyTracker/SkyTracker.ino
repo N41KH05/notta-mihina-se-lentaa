@@ -230,6 +230,14 @@ void leaveDemo() {                         // switch from simulated planes to li
   if (fetchTask) xTaskNotifyGive(fetchTask);
 }
 
+// Wi-Fi at reduced transmit power. At full power (20 dBm) each burst draws a lot of
+// current, and a supply that sags under it can leave the screen panel's own power circuit
+// in a state that shows lines until the power is cut. 11 dBm is plenty indoors.
+void wifiBegin(const char* ssid, const char* pass) {
+  WiFi.begin(ssid, pass[0] ? pass : nullptr);
+  WiFi.setTxPower(WIFI_POWER_11dBm);
+}
+
 // Hooks for the on-screen Wi-Fi setup (ui.cpp).
 void hScan() { WiFi.scanDelete(); WiFi.scanNetworks(true); }
 int hResults(WifiNet* out, int max) {
@@ -257,7 +265,7 @@ int hResults(WifiNet* out, int max) {
 void hConnect(const char* ssid, const char* pass) {
   WiFi.disconnect();
   delay(100);
-  WiFi.begin(ssid, pass[0] ? pass : nullptr);
+  wifiBegin(ssid, pass);
 }
 int hStatus() {
   wl_status_t st = WiFi.status();
@@ -462,7 +470,7 @@ const WifiHooks wifiHooks = {hScan, hResults, hConnect, hStatus, hCurrent, hConn
 
 bool connectSaved() {
   if (!savedSsid[0]) return false;
-  WiFi.begin(savedSsid, savedPass[0] ? savedPass : nullptr);
+  wifiBegin(savedSsid, savedPass);
   for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) delay(500);
   return WiFi.status() == WL_CONNECTED;
 }
@@ -688,7 +696,7 @@ void wifiWatch() {
     tries++;
     Serial.printf("Wi-Fi: trying \"%s\" again (%d)\n", savedSsid, tries);
     WiFi.disconnect();
-    WiFi.begin(savedSsid, savedPass[0] ? savedPass : nullptr);
+    wifiBegin(savedSsid, savedPass);
   }
   // Still nothing after half an hour: a fresh start resets the radio completely.
   if (down > 30 * 60000UL && !state.demo && millis() - lastInput > 5 * 60000UL)
@@ -931,7 +939,7 @@ void setup() {
   uiInit(&wifiHooks);
   if (savedDemo) {                     // demo planes were chosen last time: keep them
     demoInit(state, millis());
-    if (savedSsid[0]) WiFi.begin(savedSsid, savedPass[0] ? savedPass : nullptr);
+    if (savedSsid[0]) wifiBegin(savedSsid, savedPass);
   } else if (savedSsid[0]) {
     char sub[64];
     snprintf(sub, sizeof sub, TR("Verkko: %s", "Network: %s"), savedSsid);
@@ -997,7 +1005,7 @@ static bool screenTest() {
       shown = -1;
       boardBacklight(true);
       WiFi.mode(WIFI_STA);
-      if (savedSsid[0]) WiFi.begin(savedSsid, savedPass[0] ? savedPass : nullptr);
+      if (savedSsid[0]) wifiBegin(savedSsid, savedPass);
       baseStale = true;
       Ev e;
       while (xQueueReceive(events, &e, 0)) {}
