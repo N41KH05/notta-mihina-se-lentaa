@@ -40,7 +40,7 @@ You need the board (the touch version), a USB-C cable and a 5 V / 1 A phone char
 
 <img src="docs/img/case.png" width="560" alt="Renders of the case">
 
-There's a 3D-printable case in [`case/`](case/). It's closed on all sides, has two fold-out legs that tilt the screen back 20°, and has openings in the side wall for the USB-C ports. It's an OpenSCAD file with the dimensions as parameters. I made it from Waveshare's drawings, so measure your board before printing; [`case/README.md`](case/README.md) lists what to check.
+There's a 3D-printable case in [`case/`](case/): a frame for the screen, a back plate that screws onto the screen's brass standoffs, and a fold-out kickstand that leans it back 20°. All the screws go in from the back, and the USB-C ports are reached through a small bay in the side. STLs, a STEP file and the print guide are in [`case/README.md`](case/README.md).
 
 ## Repository
 
@@ -54,7 +54,7 @@ There's a 3D-printable case in [`case/`](case/). It's closed on all sides, has t
   - `demo.cpp`: simulated traffic
   - generated or third-party: `mapdata.cpp` (tools/make_map.py), `fonts.h` (tools/make_fonts.py), `qr.c`, `stb_image.h`
 - `simulator/`: builds the browser version (`docs/sim.wasm`).
-- `case/`: the enclosure (OpenSCAD source and STLs).
+- `case/`: the enclosure (build script, STEP and STLs).
 - `tools/`: scripts that generate the map data and fonts.
 - `docs/`: the GitHub Pages site.
 

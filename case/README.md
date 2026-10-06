@@ -1,58 +1,59 @@
 # Case
 
-A printable case for the Waveshare ESP32-S3-Touch-LCD-7 (touch version). It's closed all round apart from some narrow air slots in the back, two fold-out legs tilt the screen back 20°, and the USB-C ports are reachable through openings in the side wall.
+A printable case for the Waveshare ESP32-S3-Touch-LCD-7 (touch version). Three parts: a frame that holds the screen, a back plate that screws onto the screen's own brass standoffs, and a fold-out kickstand that leans the screen back 20°. Every screw goes in from the back, so the front is just the bezel and the glass.
 
-![preview](preview.png)
+![The case](img/hero.png)
 
-## Measure first
+| | |
+|---|---|
+| ![Back with the stand open](img/back.png) | ![The parts](img/exploded.png) |
+| ![USB bay](img/bay.png) | ![Side](img/side.png) |
 
-The model is drawn from Waveshare's outline drawing (glass 192.96 × 110.76 mm) and photos, not from a board on my desk, so check these before you print. Each one is a variable at the top of `skytracker_case.scad`.
+## How it fits together
 
-1. `glass_t` (1.8 mm): thickness of the touch glass at its edge. The body clamps exactly this much.
-2. `board_depth` (22 mm): with the screen face down, the height from the back of the glass to the tallest part on the board. Add a millimetre or two.
-3. `module_w` × `module_h` (165 × 100 mm): the screen module and board behind the glass. The walls and screw posts stay outside it.
-4. The bare strip of glass at the left and right edges on the back. The side rails sit on it and need about 10 mm with nothing stuck to it.
-5. The USB-C ports. Both (USB and UART1) are on the same edge: left when you look at the back of the board, so right when you look at the screen. `port_y` is the height of each port's centre above the bottom edge of the glass (49 and 73 mm, estimated from photos), and `port_depth` is how far the centre sits behind the glass (9 mm).
+- **Frame:** bezel and walls in one piece. The screen drops in from the back, glass first, into a pocket behind the bezel lip. Nothing sticks into its path; the four screw posts sit in the corners outside the glass's rounded corners.
+- **Back plate:** four posts land on the brass standoffs on the back of the screen and press it 0.2 mm forward against the lip, so it can't rattle. Four more screws hold the plate to the frame's corner posts.
+- **USB bay:** both USB-C ports are 41 mm in from the edge of the glass, too deep to reach through a hole in the side. The back plate has a small tub that slides into an opening in the left wall (seen from the front). Plugs go in from the side through a window in the tub's inner wall; the rest of the board stays hidden. The upper port is USB (power, uploads, serial monitor), the lower one UART1.
+- **Kickstand:** hinged on top of the frame. Folded, it lies flat on the back plate. Fold it out until it stops (a lug on the leg lands on the frame at 26°) and the screen leans back 20°, standing on the bottom edge of the back plate and the foot of the leg about 55 mm behind it. Tapping the screen pushes it towards the leg, so it doesn't tip.
 
-The port openings are 13.5 × 8 mm, enough for the grip of a normal USB-C plug to go in a little. Very chunky plugs may not reach; a slim or right-angle one is safest.
+The dimensions come from Waveshare's drawing and 3D model of the board. Before printing, check that the glass edge is no more than 1.8 mm thick (mine is about 1 mm).
 
 ## Printing
 
-Print `stl/frame.stl` front face down, `stl/body.stl` as exported (rails on the bed), `stl/back.stl` outer face down, and `stl/leg.stl` twice. No supports.
+| Part | File | Orientation |
+|---|---|---|
+| Frame | `stl/frame.stl` | bezel face down |
+| Back plate | `stl/back.stl` | outside face down |
+| Kickstand | `stl/leg.stl` | flat side down |
 
-The body is 210 × 130 mm, so you need a bed of roughly 215 × 135 or bigger; an A1 mini is too small. I'd use PETG so it doesn't go soft in a sunny window, but PLA is fine. 0.2 mm layers, 3 walls and 25 % infill work, and the whole thing takes about 150–170 g of filament and roughly 4–5 hours on a fast printer (Bambu, Prusa MK4), 8–10 on an older one.
+No supports needed. The hinge blocks on the frame have 45° slopes under them, and the floor of the USB tub bridges 40 mm, which PETG handles fine.
+
+The frame needs a bed of about 215 × 130 mm. I'd use PETG so it doesn't soften in a sunny window. 0.2 mm layers, 3 walls and 20–25 % infill are plenty, and the three parts come to roughly 110–130 g of filament.
 
 ## Hardware
 
-- 4 × M3×8 countersunk (DIN 7991) for the front bezel. Not longer.
-- 2 × M3×12, any head, for the leg hinges
-- 4 × M3×10 pan or button head for the back plate. These cut their own thread.
-- 6 × M3 nuts
-- 4 small rubber feet
-- Optionally some 1 mm foam tape if the glass rattles
+- 4 × M3×18 with washers: back plate into the brass standoffs
+- 4 × M3×10: back plate into the frame's corner posts (they cut their own thread)
+- 2 × M3×20 with washers: kickstand hinge, one from each side
+- Optionally two small rubber feet: one under the foot of the leg, one on the bottom edge
 
 ## Assembly
 
-1. Press 4 nuts into the hex pockets on the back of the side rails and 2 into the pockets on the inside of the side walls, level with the hinge tabs. A drop of glue holds them.
-2. Put the bezel face down on a cloth and drop the screen in, glass first.
-3. Put the body over it so the rails rest on the glass edges, and screw in the 4 countersunk screws from the front. Tighten evenly until the glass is held; if it still moves, add foam tape under the rails.
-4. Each leg goes on the outside of its hinge tab with the recessed hole facing out. Put an M3×12 through the leg and tab into the nut, and tighten until the leg stays where you put it.
-5. Screw on the back plate. Stop when the screws are snug, or you'll strip the plastic.
-6. Stick the rubber feet under the front feet and the leg ends, fold the legs out to their stop and stand it up.
-7. Plug the cable into the lower opening on the right (the USB port). That port does power, uploads and the serial monitor. UART1 above it also works for power and uploads.
+1. Screw the kickstand to the hinge blocks on top of the frame: one M3×20 from each side through the block into the leg. Tighten until the leg stays where you put it.
+2. Lay the frame face down on a cloth and drop the screen in from the back, glass first.
+3. Put the back plate on. The USB tub slides into the opening in the side wall next to the ports.
+4. Put the four M3×18 screws through the posts into the standoffs, then the four M3×10 into the corners. Snug is enough; don't strip the plastic.
+5. Plug the cable in through the side, fold the leg out and stand it up.
 
-BOOT, RESET and the SD card slot end up inside. You don't need them normally; updates go in through the side port. If you do, the back plate comes off with 4 screws.
-
-With the legs out, the balance point is about 3 cm behind the front feet and 8 cm in front of the leg feet, so tapping the screen won't tip it over. Let the cable drop straight down beside the case; the legs are well behind the plug.
+BOOT, RESET and the SD card slot end up inside. You don't need them normally; updates come over Wi-Fi. If you ever do, the back plate comes off with eight screws.
 
 ## Changing it
 
-Everything is a variable at the top of the file: `tilt`, `pivot_y` (where the legs attach), `lift` (front feet), `board_depth`, `port_y` / `port_depth` / `port_side`, `vent_w`, and `back_cable` if you'd rather have a cable hole in the back plate as well. The leg length and stop are recalculated so the screen still stands at `tilt`.
+`step/case.step` has all three parts. Import it into Onshape, Fusion or FreeCAD if you want to edit the shapes directly.
 
-Change a value in [OpenSCAD](https://openscad.org) and export with F6 then F7, or export all parts at once:
+The parts are also generated by [`build_case.py`](build_case.py), with the measurements at the top of the file (glass pocket, standoff positions, bay size, hinge position and opening angle). To rebuild the STL and STEP files:
 
 ```
-python export_stl.py glass_t=1.6 board_depth=18
+pip install cadquery-ocp
+python build_case.py
 ```
-
-Set `part = "assembly"` (or `"assembly_folded"`) to see the whole thing with a dummy screen.
