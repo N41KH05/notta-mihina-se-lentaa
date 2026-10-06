@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <algorithm>
 #include "render.h"
 #include "mapdata.h"
 
@@ -91,7 +92,7 @@ const char* signalWord(int rssi) {
 }
 
 // ---- state ---------------------------------------------------------------------------
-enum Screen { S_NONE, S_SETTINGS, S_WIFI, S_KEYS, S_CONNECT, S_PLACES, S_UPDATE };
+enum Screen { S_NONE, S_SETTINGS, S_WIFI, S_KEYS, S_CONNECT, S_PLACES, S_UPDATE, S_FLIGHTS };
 const WifiHooks* hooks = nullptr;
 Screen screen = S_NONE;
 bool firstRun = false;
@@ -103,14 +104,18 @@ WifiNet nets[MAX_NETS];
 int nNets = -1;                 // -1 = searching
 int page = 0;
 
-// What the keyboard is typing: a Wi-Fi password, a network name, or a home address.
-enum KbFor { KB_PASS, KB_SSID, KB_PLACE };
+// What the keyboard is typing: a Wi-Fi password, a network name, a home address or a flight.
+enum KbFor { KB_PASS, KB_SSID, KB_PLACE, KB_FLIGHT };
 KbFor kbFor = KB_PASS;
 bool homeFirst = false;         // asking for home right after the first Wi-Fi setup
 char placeQuery[64] = "";
 const int MAX_PLACES = 6;
 Place places[MAX_PLACES];
 int nPlaces = -1;               // -1 searching, -2 failed
+char flightQuery[16] = "";
+const int MAX_FOUND = 6;
+Plane found[MAX_FOUND];
+int nFound = -1;                // -1 searching, -2 failed
 char ssid[33] = "", pass[64] = "", field[64] = "";
 bool secure = true, showPw = false;
 int kbMode = 0;                 // 0 letters, 1 symbols, 2 more symbols
@@ -371,6 +376,7 @@ void drawKeys(Adafruit_GFX& g, uint32_t now) {
   char title[64], name[36];
   fitCopy(name, sizeof name, ssid, B22, 420);
   if (kbFor == KB_PLACE) snprintf(title, sizeof title, "%s", TR("Missä koti on?", "Where is home?"));
+  else if (kbFor == KB_FLIGHT) snprintf(title, sizeof title, "%s", TR("Etsi lento", "Find a flight"));
   else if ((kbFor == KB_SSID)) snprintf(title, sizeof title, "%s", TR("Verkon nimi", "Network name"));
   else snprintf(title, sizeof title, TR("Salasana: %s", "Password: %s"), name);
   if (kbFor == KB_PLACE && homeFirst) header(g, title, false, TR("Ohita", "Skip"), &SKIP);
@@ -386,7 +392,8 @@ void drawKeys(Adafruit_GFX& g, uint32_t now) {
   else utf8ToFont(field, shown, sizeof shown);               // one byte per character
   const char* vis = shown;                                   // keep the end visible
   while (textW(B22, vis) > KB_FIELD.w - 40 && *vis) vis++;
-  if (!len) text(g, KB_FIELD.x + 16, KB_FIELD.y + 14, kbFor == KB_PLACE ? TR("Katuosoite tai paikkakunta, esim. Helsinki", "Street address or town, e.g. Helsinki") :
+  if (!len) text(g, KB_FIELD.x + 16, KB_FIELD.y + 14, kbFor == KB_FLIGHT ? TR("Lento, kutsutunnus tai rekisteri, esim. AY1431 tai OH-LVA", "Flight, callsign or registration, e.g. AY1431 or OH-LVA") :
+                 kbFor == KB_PLACE ? TR("Katuosoite tai paikkakunta, esim. Helsinki", "Street address or town, e.g. Helsinki") :
                  (kbFor == KB_SSID) ? TR("Kirjoita verkon nimi", "Type the network name") : TR("Kirjoita Wi-Fi-salasana", "Type the Wi-Fi password"), R14, C_TEXT2);
   else text(g, KB_FIELD.x + 16, KB_FIELD.y + 13, vis, B22, C_TEXT);
   if ((now / 500) % 2 == 0) {
@@ -409,7 +416,7 @@ void drawKeys(Adafruit_GFX& g, uint32_t now) {
       case K_CHAR: snprintf(lab, sizeof lab, "%s", k.s); break;
       case K_MODE: snprintf(lab, sizeof lab, "%s", kbMode ? "ABC" : "?123"); break;
       case K_SPACE: snprintf(lab, sizeof lab, "%s", TR("välilyönti", "space")); break;
-      case K_ACTION: snprintf(lab, sizeof lab, "%s", kbFor == KB_PLACE ? TR("Hae", "Search") : (kbFor == KB_SSID) ? TR("Seuraava", "Next") : TR("Yhdistä", "Connect")); break;
+      case K_ACTION: snprintf(lab, sizeof lab, "%s", kbFor == KB_PLACE || kbFor == KB_FLIGHT ? TR("Hae", "Search") : (kbFor == KB_SSID) ? TR("Seuraava", "Next") : TR("Yhdistä", "Connect")); break;
       case K_SHIFT:
         if (kbMode) { snprintf(lab, sizeof lab, "%s", kbMode == 1 ? TR("lisää", "more") : TR("takaisin", "back")); break; }
         g.fillTriangle(cx, cy - 12, cx - 12, cy + 1, cx + 12, cy + 1, fg);     // shift arrow
@@ -530,6 +537,51 @@ void drawPlaces(Adafruit_GFX& g, uint32_t now) {
   text(g, 24, H - 24, TR("Osoitehaku: (c) OpenStreetMapin tekijät, Nominatim", "Address search: (c) OpenStreetMap contributors, Nominatim"), R12, C_TEXT2);
 }
 
+// ---- screens: flight search results ----------------------------------------------------
+void startFlightSearch() {
+  nFound = -1;
+  hooks->flightSearch(flightQuery);
+  screen = S_FLIGHTS;
+}
+void drawFlights(Adafruit_GFX& g, uint32_t now) {
+  header(g, TR("Etsi lento", "Find a flight"), true);
+  g.fillRect(0, 58, W, H - 58, C_BG);
+  char t[140], q[24];
+  fitCopy(q, sizeof q, flightQuery, R14, 300);
+  snprintf(t, sizeof t, TR("Haku: %s", "Search: %s"), q);
+  text(g, 24, 66, t, R14, C_TEXT2);
+  if (nFound == -1) {
+    int dots = (now / 400) % 4;
+    const char* lbl = TR("Haetaan", "Searching");
+    snprintf(t, sizeof t, "%s%.*s", lbl, dots, "...");
+    text(g, W / 2 - (textW(B22, lbl) + textW(B22, "...")) / 2, 220, t, B22, C_TEXT);
+    return;
+  }
+  if (nFound <= 0) {
+    textC(g, W / 2, 180, nFound == 0 ? TR("Lentoa ei löytynyt", "No flight found") : TR("Haku ei onnistunut", "Search failed"), B22, C_TEXT);
+    if (nFound == 0) {
+      textC(g, W / 2, 220, TR("Vain ilmassa juuri nyt olevat koneet löytyvät.", "Only planes in the air right now can be found."), R14, C_TEXT2);
+      textC(g, W / 2, 242, TR("Kokeile kutsutunnusta (FIN1431) tai rekisteriä (OH-LVA).", "Try the callsign (FIN1431) or the registration (OH-LVA)."), R14, C_TEXT2);
+    } else {
+      textC(g, W / 2, 220, TR("Tarkista Wi-Fi-yhteys ja yritä uudelleen.", "Check the Wi-Fi connection and try again."), R14, C_TEXT2);
+    }
+    button(g, PL_RETRY, TR("Muuta hakua", "Change search"), true);
+    return;
+  }
+  g.fillRoundRect(24, ROW_Y - 4, W - 48, nFound * ROW_H + 8, 10, C_CARD);
+  g.drawRoundRect(24, ROW_Y - 4, W - 48, nFound * ROW_H + 8, 10, C_LINE);
+  for (int i = 0; i < nFound; i++) {
+    int y = ROW_Y + i * ROW_H;
+    if (i) g.drawFastHLine(40, y, W - 80, C_LINE);
+    char name[40], line[140], detail[140];
+    fitCopy(name, sizeof name, found[i].label(), B18, W - 100);
+    flightSummary(line, sizeof line, found[i]);
+    fitCopy(detail, sizeof detail, line, R14, W - 100);
+    text(g, 44, y + 7, name, B18, C_TEXT);
+    text(g, 44, y + 31, detail, R14, C_TEXT2);
+  }
+}
+
 void startConnect() {
   connectResult = 0;
   connectStart = 0;       // stamped on the next tick
@@ -542,10 +594,17 @@ void startConnect() {
 // ---- public ---------------------------------------------------------------------------------
 void uiInit(const WifiHooks* h) { hooks = h; }
 bool uiActive() { return screen != S_NONE; }
-bool uiBusy() { return screen == S_KEYS || screen == S_CONNECT || screen == S_PLACES || (screen == S_WIFI && firstRun); }
+bool uiBusy() { return screen == S_KEYS || screen == S_CONNECT || screen == S_PLACES || screen == S_FLIGHTS || (screen == S_WIFI && firstRun); }
 void uiClose() { screen = S_NONE; }
 void uiOpenSettings() { screen = S_SETTINGS; }
 void uiOpenUpdate() { screen = S_UPDATE; }
+void uiOpenFlightSearch() {
+  kbFor = KB_FLIGHT;
+  snprintf(field, sizeof field, "%s", flightQuery);
+  kbMode = 0;
+  shift = 2;                                  // caps lock: callsigns and registrations
+  screen = S_KEYS;
+}
 void uiOpenHome(bool first) {
   homeFirst = first;
   kbFor = KB_PLACE;
@@ -586,6 +645,10 @@ void uiTick(uint32_t now) {
       firstRun = false;
       if (hooks->needHome()) uiOpenHome(true);        // first time: where is home?
     }
+  }
+  if (screen == S_FLIGHTS && nFound == -1) {
+    int n = hooks->flightResults(found, MAX_FOUND);
+    if (n != -1) nFound = n;
   }
   if (screen == S_PLACES && nPlaces == -1) {
     int n = hooks->placeResults(places, MAX_PLACES);
@@ -652,7 +715,9 @@ void uiTap(int x, int y, uint32_t now, AppState& s) {
       }
       break;
     case S_KEYS: {
-      if (kbFor == KB_PLACE) {
+      if (kbFor == KB_FLIGHT) {
+        if (BACK.hit(x, y)) { screen = S_NONE; break; }
+      } else if (kbFor == KB_PLACE) {
         if (homeFirst && SKIP.hit(x, y)) { hooks->homeSkipped(); homeFirst = false; screen = S_NONE; break; }
         if (!homeFirst && BACK.hit(x, y)) { screen = S_SETTINGS; break; }
       } else if (BACK.hit(x, y)) { screen = S_WIFI; if (nNets < 0) startScan(); break; }
@@ -666,7 +731,7 @@ void uiTap(int x, int y, uint32_t now, AppState& s) {
           case K_CHAR:
           case K_SPACE: {
             int add = strlen(k.s);
-            if (len + add <= ((kbFor == KB_SSID) ? 32 : 63)) strcat(field, k.s);
+            if (len + add <= (kbFor == KB_FLIGHT ? 12 : (kbFor == KB_SSID) ? 32 : 63)) strcat(field, k.s);
             if (shift == 1 && k.kind == K_CHAR) shift = 0;
             break;
           }
@@ -679,7 +744,11 @@ void uiTap(int x, int y, uint32_t now, AppState& s) {
             else shift = 0;
             break;
           case K_ACTION:
-            if (kbFor == KB_PLACE) {
+            if (kbFor == KB_FLIGHT) {
+              normalizeFlight(field, flightQuery, sizeof flightQuery);
+              if (!flightQuery[0]) break;
+              startFlightSearch();
+            } else if (kbFor == KB_PLACE) {
               if (!field[0]) break;
               snprintf(placeQuery, sizeof placeQuery, "%s", field);
               startPlaceSearch();
@@ -706,6 +775,13 @@ void uiTap(int x, int y, uint32_t now, AppState& s) {
         hooks->placeChosen(places[(y - ROW_Y) / ROW_H]);
         homeFirst = false;
         screen = S_NONE;                               // the map, with a cross to fine-tune
+      }
+      break;
+    case S_FLIGHTS:
+      if (BACK.hit(x, y) || (nFound <= 0 && nFound != -1 && PL_RETRY.hit(x, y))) { uiOpenFlightSearch(); break; }
+      if (nFound > 0 && x >= 24 && x < W - 24 && y >= ROW_Y && y < ROW_Y + nFound * ROW_H) {
+        hooks->flightChosen(found[(y - ROW_Y) / ROW_H]);
+        screen = S_NONE;                               // the map, following it
       }
       break;
     case S_CONNECT:
@@ -758,6 +834,7 @@ void uiRender(Adafruit_GFX& g, AppState& s, uint32_t now) {
     case S_CONNECT: drawConnect(g, now); break;
     case S_PLACES: drawPlaces(g, now); break;
     case S_UPDATE: drawUpdate(g); break;
+    case S_FLIGHTS: drawFlights(g, now); break;
     default: break;
   }
 }
@@ -880,6 +957,83 @@ int appTap(AppState& s, int x, int y, uint32_t nowMs, void (*requestRoute)(const
     default: break;
   }
   return hit;
+}
+
+// ============================================================================
+//  Finding a flight
+// ============================================================================
+void normalizeFlight(const char* in, char* out, size_t n) {
+  size_t o = 0;
+  for (; *in && o + 1 < n; in++) {
+    char c = *in;
+    if (c == ' ') continue;
+    if (c >= 'a' && c <= 'z') c -= 32;
+    if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') out[o++] = c;
+  }
+  out[o] = 0;
+}
+
+static void noDash(const char* in, char* out, size_t n) {
+  size_t o = 0;
+  for (; *in && o + 1 < n; in++) if (*in != '-') out[o++] = *in;
+  out[o] = 0;
+}
+
+int appFindFlights(AppState& s, const char* query, Plane* out, int max, bool* exact) {
+  char q[16];
+  noDash(query, q, sizeof q);
+  size_t ql = strlen(q);
+  int n = 0;
+  if (exact) *exact = false;
+  if (!ql) return 0;
+  // Two passes: exact matches, then (for 2+ characters) names starting with the query.
+  int firstPartial = 0;
+  for (int pass = 0; pass < 2 && n < max; pass++) {
+    if (pass == 1 && ql < 2) break;
+    firstPartial = n;
+    for (int i = 0; i < s.nPlanes && n < max; i++) {
+      const Plane& p = s.planes[i];
+      char reg[12], flight[10] = "";
+      noDash(p.reg, reg, sizeof reg);
+      const Route* r = s.route(p.cs);
+      if (r && r->state == ROUTE_KNOWN) snprintf(flight, sizeof flight, "%s", r->flight);
+      const char* names[] = {p.cs, reg, flight};
+      bool hit = false, full = false;
+      for (const char* nm : names) {
+        if (!nm[0]) continue;
+        if (!strcmp(nm, q)) { hit = full = true; break; }
+        if (pass == 1 && !strncmp(nm, q, ql)) hit = true;
+      }
+      if (!hit || (pass == 1 && full)) continue;
+      if (pass == 0 && !full) continue;
+      bool dup = false;
+      for (int k = 0; k < n && !dup; k++) dup = !strcmp(out[k].hex, p.hex);
+      if (dup) continue;
+      out[n++] = p;
+      if (full && exact) *exact = true;
+    }
+  }
+  // Partial matches: nearest to the middle of the map first.
+  std::sort(out + firstPartial, out + n, [&](const Plane& a, const Plane& b) {
+    return hypotf(a.x - s.cx, a.y - s.cy) < hypotf(b.x - s.cx, b.y - s.cy);
+  });
+  return n;
+}
+
+void appShowFlight(AppState& s, const Plane& f, void (*requestRoute)(const Plane&)) {
+  Plane* p = s.find(f.hex);
+  if (!p) {                                  // far away: put it on the map until the next report
+    p = s.nPlanes < MAX_PLANES ? &s.planes[s.nPlanes++] : &s.planes[MAX_PLANES - 1];
+    *p = f;
+    p->trailN = p->trailHead = 0;
+  }
+  snprintf(s.selHex, sizeof s.selHex, "%s", p->hex);
+  s.follow = true;
+  s.cx = p->x;
+  s.cy = p->y;
+  s.listScroll = 0;
+  if (s.zoom < 7) s.zoom = 8;                // zoomed out over a continent: come closer
+  if (requestRoute) requestRoute(*p);
 }
 
 // ============================================================================

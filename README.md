@@ -37,6 +37,7 @@ You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa
 
 - **Live map.** Planes around home on a map with coastlines, lakes, towns and airports. Positions update every 4 seconds and the planes move smoothly in between. Colour shows altitude, and the icon shows the kind of aircraft: airliner, wide-body, business jet, propeller plane, light aircraft, helicopter or glider.
 - **Flight details.** Tap a plane for its route (e.g. ARN → OUL), estimated arrival, altitude, climb rate, speed, heading, distance and aircraft type. The aircraft's registered owner shows up where it adds something: for planes with no airline, or when the plane is leased. The map draws the path it has flown since take-off, coloured by altitude.
+- **Find a flight.** The magnifier finds any plane in the air by flight number, callsign or registration, anywhere in the world, and follows it.
 - **Photos.** Aircraft photos from Planespotters.net, with the photographer's name and a QR code to the photo page.
 - **Dark mode.** Amber and green on near-black, either always on or switching at sunset and sunrise.
 - **Easy setup.** Wi-Fi and home location are set up on the touchscreen. Home can be found by address search.

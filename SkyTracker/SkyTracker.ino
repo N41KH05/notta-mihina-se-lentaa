@@ -390,10 +390,57 @@ void finishPickHome(bool save) {
   xTaskNotifyGive(fetchTask);
 }
 
+// ---- Finding a flight: the planes already on the map first, then the whole world ----------
+struct {
+  char query[16];
+  Plane res[6];
+  volatile int n = -1;                 // -1 searching, -2 failed, else how many
+  volatile bool busy = false;
+} flightSearch;
+
+void flightSearchTask(void*) {
+  static Plane local[6], online[6];
+  bool exact;
+  xSemaphoreTake(lock, portMAX_DELAY);
+  int nLocal = appFindFlights(state, flightSearch.query, local, 6, &exact);
+  bool canAsk = !state.demo && WiFi.status() == WL_CONNECTED;
+  xSemaphoreGive(lock);
+  int n = nLocal;
+  const Plane* res = local;
+  if (!exact && canAsk) {
+    int m = netFindFlights(flightSearch.query, online, 6);
+    if (m > 0) { n = m; res = online; }
+    else if (m < 0 && nLocal == 0) n = -2;
+  }
+  if (n > 0) memcpy(flightSearch.res, res, sizeof(Plane) * n);
+  flightSearch.n = n;
+  flightSearch.busy = false;
+  vTaskDelete(nullptr);
+}
+void hFlightSearch(const char* q) {
+  if (flightSearch.busy) return;
+  snprintf(flightSearch.query, sizeof flightSearch.query, "%s", q);
+  flightSearch.n = -1;
+  flightSearch.busy = true;
+  xTaskCreatePinnedToCore(flightSearchTask, "flights", 12288, nullptr, 1, nullptr, 0);
+}
+int hFlightResults(Plane* out, int max) {
+  int n = flightSearch.n;
+  if (n > 0) memcpy(out, flightSearch.res, sizeof(Plane) * (n < max ? n : max));
+  return n;
+}
+void hFlightChosen(const Plane& p) {
+  xSemaphoreTake(lock, portMAX_DELAY);
+  appShowFlight(state, p, requestRouteLocked);
+  xSemaphoreGive(lock);
+  baseStale = true;
+  xTaskNotifyGive(fetchTask);          // positions around it right away
+}
+
 void hWakeNet() { xTaskNotifyGive(fetchTask); }
 const WifiHooks wifiHooks = {hScan, hResults, hConnect, hStatus, hCurrent, hConnected, hForget, hDemo,
                              hSaveSettings, hPlaceSearch, hPlaceResults, hPlaceChosen, hNeedHome, hHomeSkipped,
-                             hWakeNet};
+                             hWakeNet, hFlightSearch, hFlightResults, hFlightChosen};
 
 bool connectSaved() {
   if (!savedSsid[0]) return false;
@@ -781,6 +828,7 @@ void loop() {
       case EV_TAP:
         switch (appTap(state, e.x, e.y, millis(), requestRouteLocked)) {
           case HIT_SETTINGS: uiOpenSettings(); break;
+          case HIT_SEARCH: uiOpenFlightSearch(); break;
           case HIT_PICK_SAVE: finishPickHome(true); break;
           case HIT_PICK_CANCEL: finishPickHome(false); break;
           default: break;

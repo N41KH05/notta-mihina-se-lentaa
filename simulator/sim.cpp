@@ -79,8 +79,21 @@ static void fHomeSkipped() { homeAsked = true; }
 static void fWakeNet() {
   if (fwUpdate.check || fwUpdate.install) { fwUpdate.check = false; fwUpdate.install = false; fwUpdate.state = UPD_CURRENT; }
 }
+// Finding a flight: the simulator only has its own made-up planes.
+static char simFlight[16];
+static uint32_t flightAt;
+static void fFlightSearch(const char* q) {
+  snprintf(simFlight, sizeof simFlight, "%s", q);
+  flightAt = nowMs;
+}
+static int fFlightResults(Plane* out, int max) {
+  if (nowMs - flightAt < 900) return -1;               // "searching…" for a moment
+  return appFindFlights(s, simFlight, out, max, nullptr);
+}
+static void fFlightChosen(const Plane& p) { appShowFlight(s, p, nullptr); }
 static const WifiHooks hooks = {fScan, fResults, fConnect, fStatus, fCurrent, fConnected, fForget, fDemo, fSave,
-                                fPlaceSearch, fPlaceResults, fPlaceChosen, fNeedHome, fHomeSkipped, fWakeNet};
+                                fPlaceSearch, fPlaceResults, fPlaceChosen, fNeedHome, fHomeSkipped, fWakeNet,
+                                fFlightSearch, fFlightResults, fFlightChosen};
 
 static void onEvent(const Ev& e) {
   if (uiActive()) {                        // menus only use taps
@@ -94,6 +107,7 @@ static void onEvent(const Ev& e) {
     case EV_TAP:
       switch (appTap(s, e.x, e.y, nowMs, nullptr)) {
         case HIT_SETTINGS: uiOpenSettings(); break;
+        case HIT_SEARCH: uiOpenFlightSearch(); break;
         case HIT_PICK_SAVE: appEndPickHome(s, true); homeAsked = true; if (s.demo) demoInit(s, nowMs); break;
         case HIT_PICK_CANCEL: appEndPickHome(s, false); homeAsked = true; break;
         default: break;

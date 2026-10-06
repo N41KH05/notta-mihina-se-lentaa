@@ -66,19 +66,49 @@ void trafficFilter(JsonDocument& filter) {
   }
 }
 
+// One plane of a report. False if it can't be shown (no position, stale, or on the ground).
+bool readPlane(JsonObject a, Plane& p, uint32_t now) {
+  if (!a["lat"].is<float>() || !a["lon"].is<float>()) return false;
+  if ((a["seen_pos"] | 0.0f) > 60) return false;
+  bool ground = a["alt_baro"].is<const char*>();
+  if (ground && HIDE_ON_GROUND) return false;
+  double lat = a["lat"].as<double>(), lon = a["lon"].as<double>();
+  memset(&p, 0, sizeof(Plane));
+  copyStr(p.hex, sizeof p.hex, a["hex"] | "");
+  copyStr(p.cs, sizeof p.cs, a["flight"] | "");
+  copyStr(p.reg, sizeof p.reg, a["r"] | "");
+  copyStr(p.type, sizeof p.type, a["t"] | "");
+  copyStr(p.squawk, sizeof p.squawk, a["squawk"] | "");
+  copyStr(p.category, sizeof p.category, a["category"] | "");
+  p.lat = lat;
+  p.lon = lon;
+  p.fx = p.x = mercX(lon);
+  p.fy = p.y = mercY(lat);
+  p.tMs = now - (uint32_t)((a["seen_pos"] | 0.0f) * 1000);
+  p.hasAlt = ground || a["alt_baro"].is<float>();
+  p.alt = ground ? 0 : (int32_t)(a["alt_baro"] | 0.0f);
+  p.hasGs = a["gs"].is<float>();
+  p.gs = a["gs"] | 0.0f;
+  p.hasTrack = a["track"].is<float>();
+  p.track = a["track"] | 0.0f;
+  p.hasVrate = a["baro_rate"].is<float>();
+  p.vrate = (int32_t)(a["baro_rate"] | 0.0f);
+  return true;
+}
+
+JsonArray reportList(JsonDocument& doc) {
+  return doc["ac"].is<JsonArray>() ? doc["ac"].as<JsonArray>() : doc["aircraft"].as<JsonArray>();
+}
+
 // Reads the planes of a report into out. If there are more than MAX_PLANES (a wide view
 // over busy airspace), keeps the ones nearest to (cx, cy), the middle of the view.
 int trafficParse(JsonDocument& doc, Plane* out, uint32_t now, float cx, float cy) {
-  JsonArray list = doc["ac"].is<JsonArray>() ? doc["ac"].as<JsonArray>() : doc["aircraft"].as<JsonArray>();
   static float dist[MAX_PLANES];
+  static Plane tmp;
   int n = 0, far = -1;                       // far: the kept plane furthest from the centre
-  for (JsonObject a : list) {
-    if (!a["lat"].is<float>() || !a["lon"].is<float>()) continue;
-    if ((a["seen_pos"] | 0.0f) > 60) continue;
-    bool ground = a["alt_baro"].is<const char*>();
-    if (ground && HIDE_ON_GROUND) continue;
-    double lat = a["lat"].as<double>(), lon = a["lon"].as<double>();
-    float x = mercX(lon), y = mercY(lat), d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+  for (JsonObject a : reportList(doc)) {
+    if (!readPlane(a, tmp, now)) continue;
+    float d = (tmp.fx - cx) * (tmp.fx - cx) + (tmp.fy - cy) * (tmp.fy - cy);
     int slot;
     if (n < MAX_PLANES) slot = n++;
     else if (d < dist[far]) slot = far;      // closer than the furthest one kept: replace it
@@ -88,27 +118,7 @@ int trafficParse(JsonDocument& doc, Plane* out, uint32_t now, float cx, float cy
       far = 0;
       for (int i = 1; i < n; i++) if (dist[i] > dist[far]) far = i;
     }
-    Plane& p = out[slot];
-    memset(&p, 0, sizeof(Plane));
-    copyStr(p.hex, sizeof p.hex, a["hex"] | "");
-    copyStr(p.cs, sizeof p.cs, a["flight"] | "");
-    copyStr(p.reg, sizeof p.reg, a["r"] | "");
-    copyStr(p.type, sizeof p.type, a["t"] | "");
-    copyStr(p.squawk, sizeof p.squawk, a["squawk"] | "");
-    copyStr(p.category, sizeof p.category, a["category"] | "");
-    p.lat = lat;
-    p.lon = lon;
-    p.fx = p.x = x;
-    p.fy = p.y = y;
-    p.tMs = now - (uint32_t)((a["seen_pos"] | 0.0f) * 1000);
-    p.hasAlt = ground || a["alt_baro"].is<float>();
-    p.alt = ground ? 0 : (int32_t)(a["alt_baro"] | 0.0f);
-    p.hasGs = a["gs"].is<float>();
-    p.gs = a["gs"] | 0.0f;
-    p.hasTrack = a["track"].is<float>();
-    p.track = a["track"] | 0.0f;
-    p.hasVrate = a["baro_rate"].is<float>();
-    p.vrate = (int32_t)(a["baro_rate"] | 0.0f);
+    out[slot] = tmp;
   }
   return n;
 }
@@ -487,6 +497,70 @@ int netSearchPlaces(const char* query, Place* out, int max) {
   if (getJson(url, doc, filter, err, sizeof err, ua) != 200) return -1;
   int n = nominatimParse(doc, out, max);
   Serial.printf("Place search \"%s\": %d found\n", query, n);
+  return n;
+}
+
+// ---------------------------------------------------------------------------
+//  Finding a flight anywhere in the world (the magnifier on the map)
+// ---------------------------------------------------------------------------
+namespace {
+// Planes with this callsign (or registration) right now, from the first service that answers.
+int askFlights(bool byReg, const char* value, Plane* out, int max) {
+  static const char* const URLS[2][2] = {
+    {"https://api.airplanes.live/v2/callsign/%s", "https://opendata.adsb.fi/api/v2/callsign/%s"},
+    {"https://api.airplanes.live/v2/reg/%s",      "https://opendata.adsb.fi/api/v2/registration/%s"},
+  };
+  if (!urlSafe(value)) return 0;
+  JsonDocument filter;
+  trafficFilter(filter);
+  JsonDocument doc(&psram);
+  for (const char* fmt : URLS[byReg]) {
+    char url[120], err[48];
+    snprintf(url, sizeof url, fmt, value);
+    doc.clear();
+    if (getJson(url, doc, filter, err, sizeof err) != 200) continue;
+    int n = 0;
+    for (JsonObject a : reportList(doc))
+      if (n < max && readPlane(a, out[n], millis())) n++;
+    return n;
+  }
+  return -1;
+}
+// A flight number like AY1431 -> the callsign the plane sends, FIN1431 (adsbdb).
+bool icaoCallsign(const char* flight, char* out, size_t n) {
+  char url[100], err[48];
+  snprintf(url, sizeof url, "https://api.adsbdb.com/v0/callsign/%s", flight);
+  JsonDocument filter;
+  filter["response"]["flightroute"]["callsign_icao"] = true;
+  JsonDocument doc;
+  if (getJson(url, doc, filter, err, sizeof err) != 200) return false;
+  copyStr(out, n, doc["response"]["flightroute"]["callsign_icao"] | "");
+  return out[0] != 0;
+}
+// Two letters or a letter and a digit, then 1-4 digits and maybe a letter: AY1431, D82871.
+bool looksLikeFlightNumber(const char* q) {
+  size_t len = strlen(q);
+  if (len < 3 || len > 7 || !isalnum((uint8_t)q[0]) || !isalnum((uint8_t)q[1])) return false;
+  if (isdigit((uint8_t)q[0]) && isdigit((uint8_t)q[1])) return false;
+  size_t i = 2, digits = 0;
+  while (i < len && isdigit((uint8_t)q[i])) { i++; digits++; }
+  if (i < len && isalpha((uint8_t)q[i])) i++;
+  return digits >= 1 && digits <= 4 && i == len;
+}
+}  // namespace
+
+int netFindFlights(const char* query, Plane* out, int max) {
+  if (strchr(query, '-')) return askFlights(true, query, out, max);   // OH-LVA: a registration
+  int n = askFlights(false, query, out, max);
+  if (n == 0 && looksLikeFlightNumber(query)) {
+    char cs[12];
+    if (icaoCallsign(query, cs, sizeof cs) && strcmp(cs, query)) n = askFlights(false, cs, out, max);
+  }
+  if (n == 0 && strlen(query) >= 4) {        // registrations without a dash: N123AB, D-ABCD typed as DABCD
+    int m = askFlights(true, query, out, max);
+    if (m > 0) n = m;
+  }
+  Serial.printf("Flight search \"%s\": %d found\n", query, n);
   return n;
 }
 

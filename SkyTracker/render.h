@@ -40,7 +40,8 @@ static const int UPDATE_POPUP_Y0 = 125, UPDATE_POPUP_Y1 = 355;   // rows it cove
 // What is under a touch at (x, y)?
 enum UiHit { HIT_NONE, HIT_MAP, HIT_ZOOM_IN, HIT_ZOOM_OUT, HIT_HOME, HIT_FOLLOW, HIT_CLOSE,
              HIT_LIST_ROW, HIT_PANEL, HIT_SETTINGS, HIT_PHOTO,
-             HIT_PICK_SAVE, HIT_PICK_CANCEL };           // setting home (AppState::pickHome)
+             HIT_PICK_SAVE, HIT_PICK_CANCEL,             // setting home (AppState::pickHome)
+             HIT_SEARCH };                               // the magnifier: find a flight
 UiHit uiHitTest(int x, int y, const AppState& s, int* row);
 const char* listRowHex(int row);                 // plane shown in that panel row last frame
 
@@ -49,6 +50,9 @@ int planeAt(AppState& s, int x, int y, int maxPx);
 
 double haversineKm(double lat1, double lon1, double lat2, double lon2);
 const char* typeName(const char* icaoType);
+// One line about a plane for the flight search results: type, registration, altitude and
+// where it is from home, in the current units and language.
+void flightSummary(char* out, size_t n, const Plane& p);
 // QR code for a link (up to 78 characters), m pixels per module, top-left at x, y.
 // Returns its width/height in pixels (0 if the link is too long).
 int drawQr(Adafruit_GFX& g, int x, int y, const char* link, int m = 2);

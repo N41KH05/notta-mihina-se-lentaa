@@ -25,6 +25,10 @@ struct WifiHooks {
   bool (*needHome)();                                 // ask for home after the first Wi-Fi setup?
   void (*homeSkipped)();                              // "Ohita": keep the default, don't ask again
   void (*wakeNet)();                                  // the background task: look at fwUpdate now
+  // Finding a flight (the magnifier on the map)
+  void (*flightSearch)(const char* query);            // start a search
+  int (*flightResults)(Plane* out, int max);          // -1 still searching, -2 failed
+  void (*flightChosen)(const Plane& p);               // select it and follow it
 };
 
 void uiInit(const WifiHooks* hooks);
@@ -33,6 +37,7 @@ void uiOpenSettings();
 void uiOpenHome(bool firstTime);                      // "Missä koti on?" address search
 void uiOpenWifi(const char* note, bool firstRun, bool alert);  // note: shown above the list (red if alert)
 void uiOpenUpdate();                                  // "a new version is available": install / later / skip
+void uiOpenFlightSearch();                            // the magnifier: type a flight to find
 void uiClose();
 void uiTap(int x, int y, uint32_t nowMs, AppState& s);
 void uiTick(uint32_t nowMs);                          // call often: scans, connecting
@@ -74,6 +79,15 @@ void appEndPickHome(AppState& s, bool save);
 // requestRoute(plane) is called when a plane gets selected (may be null).
 // Returns what was tapped (the caller opens Settings for HIT_SETTINGS).
 int appTap(AppState& s, int x, int y, uint32_t nowMs, void (*requestRoute)(const Plane&));
+
+// Finding a flight. normalizeFlight: upper case, no spaces (AY 1431 -> AY1431).
+void normalizeFlight(const char* in, char* out, size_t n);
+// Planes already on the map matching the query: callsign, registration (with or without
+// the dash) or flight number (AY1431, once its route is known). Exact matches first, then
+// ones starting with it (FIN: every Finnair plane in view). *exact: was any exact.
+int appFindFlights(AppState& s, const char* query, Plane* out, int max, bool* exact);
+// Show a found plane: put it on the map if it isn't there yet, select it and follow it.
+void appShowFlight(AppState& s, const Plane& p, void (*requestRoute)(const Plane&));
 
 // Search the towns built into the map (setting home without internet). Names match from
 // the start of the name or of any word, ignoring case. Returns how many were found.

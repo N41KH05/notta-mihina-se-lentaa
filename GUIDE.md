@@ -45,6 +45,7 @@ Once it's connected it asks **Where is home?** Home is the centre of the map and
 - Drag to move the map, pinch or use + and − to zoom. The house button goes back to home.
 - The list on the right shows the planes in view, nearest first. Drag it up and down to scroll through them.
 - Tap a plane, on the map or in the list, to see its details. **FOLLOW** keeps it centred; **CLOSE** or a tap on empty map goes back to the list.
+- The magnifier in the top right finds a flight anywhere in the world. Type the flight number (AY1431), the callsign (FIN1431) or the registration (OH-LVA) and pick it from the results: the map jumps there and follows it. Only planes in the air right now can be found. Planes already on the map show up even for part of a name, so FIN lists every Finnair plane in view.
 - The line under the flight number names the airline. For planes without one, such as private planes and flying clubs, it shows the aircraft's registered owner instead. When an airliner belongs to someone other than the airline flying it (usually a leasing company), the owner is shown under the registration. Both come from adsbdb.
 - The selected plane's path since take-off is drawn on the map, coloured by altitude, and keeps growing as it flies. It comes from adsb.lol's track history. If that isn't available, a dashed line from the departure airport is shown instead.
 - The gear in the bottom left opens Settings: Wi-Fi, units, language, dark mode, home, demo mode and the data status.

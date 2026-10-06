@@ -151,6 +151,17 @@ static double bearingDeg(double lat1, double lon1, double lat2, double lon2) {
   double y = sin(dl) * cos(p2), x = cos(p1) * sin(p2) - sin(p1) * cos(p2) * cos(dl);
   return fmod(atan2(y, x) * 180 / M_PI + 360, 360);
 }
+
+void flightSummary(char* out, size_t n, const Plane& p) {
+  char alt[16], dist[24];
+  fmtAlt(alt, sizeof alt, p, true);
+  fmtDist(dist, sizeof dist, haversineKm(cfg.homeLat, cfg.homeLon, p.lat, p.lon));
+  const char* where = compass(bearingDeg(cfg.homeLat, cfg.homeLon, p.lat, p.lon));
+  char head[48] = "";
+  if (p.type[0]) snprintf(head, sizeof head, "%s  \x83  ", typeName(p.type));
+  if (p.reg[0] && strcmp(p.reg, p.label())) { size_t k = strlen(head); snprintf(head + k, sizeof head - k, "%s  \x83  ", p.reg); }
+  snprintf(out, n, TR("%s%s  \x83  %s %s kotoa", "%s%s  \x83  %s %s of home"), head, alt, dist, where);
+}
 const char* typeName(const char* t) {
   static const char* map[][2] = {
     {"A20N", "Airbus A320neo"}, {"A21N", "Airbus A321neo"}, {"A319", "Airbus A319"},
@@ -708,6 +719,8 @@ int16_t Canvas::clipTop = -32768, Canvas::clipBottom = 32767;
 static const int BTN = 46, BTN_X = MAP_W - BTN - 10;
 static const int BTN_Y_IN = H - 3 * (BTN + 8) - 2, BTN_Y_OUT = BTN_Y_IN + BTN + 8,
                  BTN_Y_HOME = BTN_Y_OUT + BTN + 8;
+// Flight search: top right of the map.
+static const int SEARCH_Y = 8;
 // Settings button: bottom left, just above the scale bar.
 static const int SET_X = 10, SET_Y = H - 40 - BTN - 4;
 // Buttons in the details panel.
@@ -718,6 +731,16 @@ static void mapButton(Adafruit_GFX& g, int y, int kind, int bx = BTN_X) {
   g.fillRoundRect(bx, y, BTN, BTN, 8, C_SURFACE);
   g.drawRoundRect(bx, y, BTN, BTN, 8, C_BTN_EDGE);
   int cx = bx + BTN / 2, cy = y + BTN / 2;
+  if (kind == 4) {                                                  // magnifier
+    int mx = cx - 4, my = cy - 4;
+    g.fillCircle(mx, my, 12, C_PRIMARY);
+    g.fillCircle(mx, my, 8, C_SURFACE);
+    for (int d = -2; d <= 2; d++) {                                 // handle
+      g.drawLine(mx + 8 + d, my + 8 - d, mx + 16 + d, my + 16 - d, C_PRIMARY);
+      g.drawLine(mx + 8, my + 8 + d, mx + 16, my + 16 + d, C_PRIMARY);
+    }
+    return;
+  }
   if (kind == 3) {                                                  // gear
     for (int i = 0; i < 8; i++) {
       float a = i * 0.785398f;
@@ -757,7 +780,7 @@ static void placeCard(const Plane* sel) {
   auto under = [&](int cx) {
     return x > cx - 16 && x < cx + CARD_W + 16 && y > CARD_Y - 16 && y < CARD_Y + cardHeight() + 12;
   };
-  const int left = 8, right = MAP_W - CARD_W - 10;
+  const int left = 8, right = MAP_W - CARD_W - BTN - 18;   // clear of the search button
   if (!under(left)) CARD_X = left;
   else if (!under(right)) CARD_X = right;
 }
@@ -845,6 +868,7 @@ UiHit uiHitTest(int x, int y, const AppState& s, int* row) {
     return HIT_PHOTO;
   if (x < MAP_W) {
     if (x >= SET_X && x < SET_X + BTN && y >= SET_Y && y < SET_Y + BTN) return HIT_SETTINGS;
+    if (x >= BTN_X && x < BTN_X + BTN && y >= SEARCH_Y && y < SEARCH_Y + BTN) return HIT_SEARCH;
     if (x >= BTN_X && x < BTN_X + BTN) {
       if (y >= BTN_Y_IN && y < BTN_Y_IN + BTN) return HIT_ZOOM_IN;
       if (y >= BTN_Y_OUT && y < BTN_Y_OUT + BTN) return HIT_ZOOM_OUT;
@@ -1354,6 +1378,7 @@ void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm
   // keep tags away from the buttons
   take(BTN_X - 4, BTN_Y_IN - 4, MAP_W, H);
   take(0, SET_Y - 4, 150, H);
+  take(BTN_X - 4, 0, MAP_W, SEARCH_Y + BTN + 4);
   bool card = photoVisible(s) && !s.pickHome;
   if (s.pickHome) n = 0;                           // no planes while setting home
   if (card) {
@@ -1376,6 +1401,7 @@ void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm
   mapButton(g, BTN_Y_OUT, 1);
   mapButton(g, BTN_Y_HOME, 2);
   if (!s.pickHome) mapButton(g, SET_Y, 3, SET_X);
+  if (!s.pickHome) mapButton(g, SEARCH_Y, 4);
   if (s.pickHome) drawPickCross(g);
 
   // panel

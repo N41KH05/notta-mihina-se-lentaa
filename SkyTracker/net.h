@@ -27,6 +27,9 @@ int netAirlabsCallsToday();
 // Address search (OpenStreetMap Nominatim). Returns how many were found, or -1 if the
 // search failed (no connection etc.). Blocking: call from a background task.
 int netSearchPlaces(const char* query, Place* out, int max);
+// Planes in the air right now with this callsign, flight number or registration
+// (normalised: upper case, no spaces). Returns how many, or -1 if no service answered.
+int netFindFlights(const char* query, Plane* out, int max);
 
 // ============================================================================
 //  Settings page for a phone (web.cpp)
