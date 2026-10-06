@@ -133,7 +133,6 @@ static void applyTheme() {
 }
 
 void drawFrame() {
-  bool resync = false;
   struct tm now, upd;
   bool haveTime = getLocalTime(&now, 0);
   xSemaphoreTake(lock, portMAX_DELAY);
@@ -143,7 +142,6 @@ void drawFrame() {
     renderBase(baseCanvas, state.cx, state.cy, state.zoom);
     baseCx = state.cx; baseCy = state.cy; baseZoom = state.zoom; baseStale = false;
     baseOffX = baseOffY = 0;
-    resync = true;                       // heavy PSRAM work: the LCD may have slipped
   }
   uint16_t* fbuf = boardBackBuffer();
   composeBase(fbuf);
@@ -153,14 +151,6 @@ void drawFrame() {
   renderOverlay(canvas, state, millis(), haveTime ? &now : nullptr, u > 100000 ? &upd : nullptr);
   xSemaphoreGive(lock);
   boardPresent();
-  // Realign the LCD stream after heavy redraws, and every few seconds anyway: network
-  // work (TLS, big downloads) also loads PSRAM, and a slipped picture shouldn't stay.
-  static uint32_t lastResync = 0;
-  uint32_t since = millis() - lastResync;
-  if ((resync && since > 500) || since > 3000) {
-    lastResync = millis();
-    boardResync();
-  }
 }
 
 void message(const char* big, const char* small) {

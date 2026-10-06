@@ -111,10 +111,11 @@ bool boardInit() {
   cfg.data_width = 16;
   cfg.bits_per_pixel = 16;
   cfg.num_fbs = 2;
-  // The LCD is fed from these internal-RAM buffers, refilled from PSRAM by an interrupt.
-  // Bigger buffers give that interrupt more time; it is slower in some builds than in
-  // others (its code runs from flash through the cache), so there is room to spare.
-  cfg.bounce_buffer_size_px = W * 30;     // 2 x 48 KB; must divide the frame (480 lines)
+  // The LCD is fed from two small internal-RAM buffers that an interrupt refills from
+  // PSRAM. Keep them small: the board package restarts the feed at every frame
+  // (CONFIG_LCD_RGB_RESTART_IN_VSYNC) and refills BOTH in the short gap between frames,
+  // so big buffers make the top of every frame late. 10 lines is Waveshare's own value.
+  cfg.bounce_buffer_size_px = W * 10;     // 2 x 16 KB; must divide the frame (480 lines)
   cfg.dma_burst_size = 64;
   cfg.hsync_gpio_num = 46;
   cfg.vsync_gpio_num = 3;
@@ -153,10 +154,6 @@ void boardPresent() {
   xSemaphoreTake(frameDone, pdMS_TO_TICKS(60));
   back ^= 1;
 }
-
-// If the LCD's data stream fell behind (PSRAM busy), the picture shifts sideways and
-// stays that way. Restarting the stream (it waits for the end of the frame) puts it back.
-void boardResync() { esp_lcd_rgb_panel_restart(panel); }
 
 void boardBacklight(bool on) {
   xSemaphoreTake(i2cLock, portMAX_DELAY);

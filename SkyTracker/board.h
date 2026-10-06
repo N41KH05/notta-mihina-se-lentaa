@@ -7,7 +7,6 @@ bool boardInit();                  // I2C, expander, LCD (double-buffered), touc
 uint16_t* boardBackBuffer();       // frame buffer to draw the next frame into
 const uint16_t* boardFrontBuffer();  // the frame on screen now
 void boardPresent();               // show it (tear-free) and swap buffers
-void boardResync();                // realign the LCD if it slipped during heavy drawing
 void boardBacklight(bool on);
 
 int boardTouch(TouchPt* pts, int max);   // current touch points (0 = none)
