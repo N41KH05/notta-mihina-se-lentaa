@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include <algorithm>
 #include "config.h"
 
 // Display units, chosen on screen and saved in flash (see SkyTracker.ino).
@@ -188,23 +189,15 @@ struct AppState {
       const Plane& p = planes[i];
       if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) out[n++] = i;
     }
-    static float dist[MAX_PLANES];          // distance to the centre, same order as out
-    for (int i = 0; i < n; i++) {
-      const Plane& p = planes[out[i]];
-      dist[i] = (p.x - cx) * (p.x - cx) + (p.y - cy) * (p.y - cy);
+    // Sort by distance to the centre (ties by index, so the order is stable).
+    struct Near { float d; int i; };
+    static Near near[MAX_PLANES];
+    for (int k = 0; k < n; k++) {
+      const Plane& p = planes[out[k]];
+      near[k] = {(p.x - cx) * (p.x - cx) + (p.y - cy) * (p.y - cy), out[k]};
     }
-    for (int i = 1; i < n; i++) {           // insertion sort by distance to centre
-      int v = out[i];
-      float dv = dist[i];
-      int j = i - 1;
-      while (j >= 0 && dist[j] > dv) {
-        out[j + 1] = out[j];
-        dist[j + 1] = dist[j];
-        j--;
-      }
-      out[j + 1] = v;
-      dist[j + 1] = dv;
-    }
+    std::sort(near, near + n, [](const Near& a, const Near& b) { return a.d < b.d || (a.d == b.d && a.i < b.i); });
+    for (int k = 0; k < n; k++) out[k] = near[k].i;
     return n;
   }
 };
@@ -214,6 +207,9 @@ struct AppState {
 // ============================================================================
 enum Lang : uint8_t { LANG_FI = 0, LANG_EN = 1 };
 inline uint8_t language = DEFAULT_LANGUAGE;      // chosen in Settings, saved in flash
+
+// How often new positions are fetched: less often when the view is full of planes.
+inline int pollSeconds(int nPlanes) { return nPlanes >= BUSY_PLANES ? POLL_SECONDS_BUSY : POLL_SECONDS; }
 
 #define TR(fi, en) (language == LANG_EN ? (en) : (fi))
 

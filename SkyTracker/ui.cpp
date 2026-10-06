@@ -219,7 +219,7 @@ void drawSettings(Adafruit_GFX& g, AppState& s) {
     fitCopy(e, sizeof e, s.apiError, R14, 560);
     text(g, 44, 390, e, R14, C_TEXT2);
   } else {
-    snprintf(t, sizeof t, TR("%d konetta seurannassa  \x83  uudet sijainnit %d s välein", "%d aircraft tracked  \x83  new positions every %d s"), s.nPlanes, POLL_SECONDS);
+    snprintf(t, sizeof t, TR("%d konetta seurannassa  \x83  uudet sijainnit %d s välein", "%d aircraft tracked  \x83  new positions every %d s"), s.nPlanes, pollSeconds(s.nPlanes));
     text(g, 44, 390, t, R14, C_TEXT2);
   }
   // Phone settings page (web.cpp): address and a QR code to open it

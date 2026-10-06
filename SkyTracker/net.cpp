@@ -65,16 +65,29 @@ void trafficFilter(JsonDocument& filter) {
   }
 }
 
-int trafficParse(JsonDocument& doc, Plane* out, uint32_t now) {
+// Reads the planes of a report into out. If there are more than MAX_PLANES (a wide view
+// over busy airspace), keeps the ones nearest to (cx, cy), the middle of the view.
+int trafficParse(JsonDocument& doc, Plane* out, uint32_t now, float cx, float cy) {
   JsonArray list = doc["ac"].is<JsonArray>() ? doc["ac"].as<JsonArray>() : doc["aircraft"].as<JsonArray>();
-  int n = 0;
+  static float dist[MAX_PLANES];
+  int n = 0, far = -1;                       // far: the kept plane furthest from the centre
   for (JsonObject a : list) {
-    if (n >= MAX_PLANES) break;
     if (!a["lat"].is<float>() || !a["lon"].is<float>()) continue;
     if ((a["seen_pos"] | 0.0f) > 60) continue;
     bool ground = a["alt_baro"].is<const char*>();
     if (ground && HIDE_ON_GROUND) continue;
-    Plane& p = out[n];
+    double lat = a["lat"].as<double>(), lon = a["lon"].as<double>();
+    float x = mercX(lon), y = mercY(lat), d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+    int slot;
+    if (n < MAX_PLANES) slot = n++;
+    else if (d < dist[far]) slot = far;      // closer than the furthest one kept: replace it
+    else continue;
+    dist[slot] = d;
+    if (n == MAX_PLANES && (far < 0 || slot == far)) {
+      far = 0;
+      for (int i = 1; i < n; i++) if (dist[i] > dist[far]) far = i;
+    }
+    Plane& p = out[slot];
     memset(&p, 0, sizeof(Plane));
     copyStr(p.hex, sizeof p.hex, a["hex"] | "");
     copyStr(p.cs, sizeof p.cs, a["flight"] | "");
@@ -82,10 +95,10 @@ int trafficParse(JsonDocument& doc, Plane* out, uint32_t now) {
     copyStr(p.type, sizeof p.type, a["t"] | "");
     copyStr(p.squawk, sizeof p.squawk, a["squawk"] | "");
     copyStr(p.category, sizeof p.category, a["category"] | "");
-    p.lat = a["lat"].as<double>();
-    p.lon = a["lon"].as<double>();
-    p.fx = p.x = mercX(p.lon);
-    p.fy = p.y = mercY(p.lat);
+    p.lat = lat;
+    p.lon = lon;
+    p.fx = p.x = x;
+    p.fy = p.y = y;
     p.tMs = now - (uint32_t)((a["seen_pos"] | 0.0f) * 1000);
     p.hasAlt = ground || a["alt_baro"].is<float>();
     p.alt = ground ? 0 : (int32_t)(a["alt_baro"] | 0.0f);
@@ -95,7 +108,6 @@ int trafficParse(JsonDocument& doc, Plane* out, uint32_t now) {
     p.track = a["track"] | 0.0f;
     p.hasVrate = a["baro_rate"].is<float>();
     p.vrate = (int32_t)(a["baro_rate"] | 0.0f);
-    n++;
   }
   return n;
 }
@@ -360,7 +372,7 @@ void netFetchPlanes(AppState& s, void* lock) {
   if (status == 200 && used != sourceIdx) Serial.printf("Using %s for live data\n", SOURCES[used].name);
   if (status == 200) sourceIdx = used;
 
-  int n = status == 200 ? trafficParse(doc, incoming, millis()) : 0;
+  int n = status == 200 ? trafficParse(doc, incoming, millis(), cx, cy) : 0;
 
   LOCK(lock);
   s.apiOk = status == 200;

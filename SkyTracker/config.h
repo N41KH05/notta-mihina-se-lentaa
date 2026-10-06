@@ -58,6 +58,8 @@
   {"adsb.lol",       "https://api.adsb.lol/v2/lat/%.4f/lon/%.4f/dist/%d"}, \
 }
 #define POLL_SECONDS    4          // fresh positions this often (services allow 1/s)
+#define POLL_SECONDS_BUSY 8        // ...but only this often with hundreds of planes in view:
+#define BUSY_PLANES     250        //   big downloads; the planes keep gliding in between
 #define FRAME_MS        200        // planes glide between fetches: redraw this often
 #define FRAME_MS_TOUCH  50         // while a finger moves the map: at most 20 frames a second
 // The screen has no memory of its own: the ESP32 sends it the whole picture ~30 times a

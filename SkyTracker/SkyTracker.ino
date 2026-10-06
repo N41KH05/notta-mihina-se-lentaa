@@ -54,7 +54,7 @@ void fetchLoop(void*) {
   esp_task_wdt_add(nullptr);           // restart the board if this task ever hangs
   for (;;) {
     esp_task_wdt_reset();
-    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(POLL_SECONDS * 1000));
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(pollSeconds(state.nPlanes) * 1000));
     esp_task_wdt_reset();
     if (state.night) continue;
     if (state.demo) {

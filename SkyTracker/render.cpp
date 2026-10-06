@@ -869,12 +869,93 @@ int planeAt(AppState& s, int x, int y, int maxPx) {
   return best;
 }
 
+// ---- Icon templates ----------------------------------------------------------------
+// Drawing an icon from its triangles costs a lot when hundreds of planes are on screen
+// (every icon twice: outline, then fill). So each shape is drawn once per kind, size and
+// 5-degree heading into a small 1-bit canvas and kept as a list of horizontal runs,
+// marked outline or fill. Drawing an icon is then a handful of line fills with no
+// overdraw. Helicopters keep the direct path (their rotor turns).
+namespace {
+struct IconRun { int8_t dx, dy; uint8_t len, fill; };
+struct IconEntry { uint32_t key; uint32_t first; uint16_t n; };
+const int ICON_SLOTS = 512, ICON_RUNS = 49152, ICON_C = 32;   // canvas 64x64, centre at 32
+IconEntry* iconTable = nullptr;
+IconRun* iconRuns = nullptr;
+uint32_t iconUsed = 0;
+int iconCount = 0;
+
+const IconEntry* iconTemplate(IconKind kind, float heading, float ks) {
+  if (!iconTable) {
+    iconTable = (IconEntry*)renderAlloc(sizeof(IconEntry) * ICON_SLOTS);
+    iconRuns = (IconRun*)renderAlloc(sizeof(IconRun) * ICON_RUNS);
+    if (!iconTable || !iconRuns) return nullptr;
+    memset(iconTable, 0, sizeof(IconEntry) * ICON_SLOTS);
+  }
+  int hb = ((int)lroundf(heading / 5.0f) % 72 + 72) % 72;
+  int sq = (int)lroundf(ks * 2);                       // size in half pixels
+  if (sq < 2 || sq > 50) return nullptr;
+  uint32_t key = 1u | (uint32_t)kind << 1 | (uint32_t)hb << 4 | (uint32_t)sq << 11;
+  uint32_t h = (key * 2654435761u) >> 23;              // 9 bits
+  for (int i = 0; i < ICON_SLOTS; i++) {
+    IconEntry& e = iconTable[(h + i) & (ICON_SLOTS - 1)];
+    if (e.key == key) return &e;
+    if (e.key) continue;
+    // Not made yet: draw outline and fill into 1-bit canvases and collect the runs.
+    if (iconCount >= ICON_SLOTS * 3 / 4 || iconUsed + 64 * 6 > ICON_RUNS) {   // full: start over
+      memset(iconTable, 0, sizeof(IconEntry) * ICON_SLOTS);
+      iconUsed = 0;
+      iconCount = 0;
+      return iconTemplate(kind, heading, ks);
+    }
+    static GFXcanvas1 outer(64, 64), inner(64, 64);
+    float hd = hb * 5.0f, k = sq * 0.5f;
+    outer.fillScreen(0);
+    inner.fillScreen(0);
+    planeShape(outer, ICON_C, ICON_C, hd, k + 2, 1, kind);
+    planeShape(inner, ICON_C, ICON_C, hd, k, 1, kind);
+    e.first = iconUsed;
+    for (int y = 0; y < 64; y++) {
+      int x = 0;
+      while (x < 64) {
+        int c = inner.getPixel(x, y) ? 2 : outer.getPixel(x, y) ? 1 : 0;
+        int x1 = x + 1;
+        while (x1 < 64 && (inner.getPixel(x1, y) ? 2 : outer.getPixel(x1, y) ? 1 : 0) == c) x1++;
+        if (c && iconUsed < ICON_RUNS)
+          iconRuns[iconUsed++] = {(int8_t)(x - ICON_C), (int8_t)(y - ICON_C), (uint8_t)(x1 - x), (uint8_t)(c == 2)};
+        x = x1;
+      }
+    }
+    e.n = (uint16_t)(iconUsed - e.first);
+    e.key = key;
+    iconCount++;
+    return &e;
+  }
+  return nullptr;
+}
+}  // namespace
+
+// An aircraft icon with its outline, centred on (x, y).
+static void drawIcon(Adafruit_GFX& g, float x, float y, float heading, float ks, uint16_t outline,
+                     uint16_t fill, IconKind kind, float rotor) {
+  const IconEntry* e = kind == ICON_HELI ? nullptr : iconTemplate(kind, heading, ks);
+  if (!e) {
+    planeShape(g, x, y, heading, ks + 2, outline, kind, rotor);
+    planeShape(g, x, y, heading, ks, fill, kind, rotor);
+    return;
+  }
+  int ix = rnd(x), iy = rnd(y);
+  const IconRun* r = iconRuns + e->first;
+  for (int i = 0; i < e->n; i++) g.drawFastHLine(ix + r[i].dx, iy + r[i].dy, r[i].len, r[i].fill ? fill : outline);
+}
+
 static void drawPlanes(Adafruit_GFX& g, AppState& s, int n, uint32_t nowMs) {
   float rotor = (nowMs % 3600000) * 0.17f;            // helicopter rotors: about half a turn a second
   float size = V_ZOOM < 7 ? 8 : 10;
+  bool manyPlanes = n > 150;                 // then only the selected plane gets its trail
   for (int k = 0; k < n; k++) {             // trails underneath
     const Plane& p = s.planes[viewIdx[k]];
     bool sel = !strcmp(p.hex, s.selHex);
+    if (manyPlanes && !sel) continue;
     uint16_t c = altColor(p);
     float lx = 0, ly = 0;
     for (int i = 0; i < p.trailN; i++) {
@@ -898,8 +979,8 @@ static void drawPlanes(Adafruit_GFX& g, AppState& s, int n, uint32_t nowMs) {
       }
       IconKind kind = iconKind(p);
       float ks = sz * iconScale(p, kind);
-      planeShape(g, x, y, hd, ks + 2, p.emergency() ? C_EMERG : C_OUTLINE, kind, rotor);
-      planeShape(g, x, y, hd, ks, p.emergency() ? RGB(255, 200, 200) : altColor(p), kind, rotor);
+      drawIcon(g, x, y, hd, ks, p.emergency() ? C_EMERG : C_OUTLINE,
+               p.emergency() ? RGB(255, 200, 200) : altColor(p), kind, rotor);
       take(x - size, y - size, x + size, y + size);
     }
   bool crowded = n > 25 && V_ZOOM < 8;
