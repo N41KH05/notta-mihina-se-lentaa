@@ -172,6 +172,14 @@ bool boardInit() {
   memset(fb[0], 0, W * H * 2);
   memset(fb[1], 0, W * H * 2);
   back = 1;
+  // Reset the panel once more, now that it gets a steady picture signal. Released from
+  // reset before the signal starts (above), it sometimes locked on wrongly and showed
+  // lines until the power was cut. The backlight is still off, so this isn't seen.
+  delay(100);
+  exSet(EXIO_LCD_RST, false);
+  delay(20);
+  exSet(EXIO_LCD_RST, true);
+  delay(150);
   return true;
 }
 
