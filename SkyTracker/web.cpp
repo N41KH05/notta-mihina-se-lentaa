@@ -45,13 +45,20 @@ bool allowed() {
   server.requestAuthentication(BASIC_AUTH, APP_NAME);
   return false;
 }
-// Changes must come from our own page: right token, and no foreign Origin header.
-// (Stops other websites from submitting forms to the device.)
+// Changes must come from our own page: the token is random per boot and only appears in
+// the page itself, which other websites can't read. A foreign Origin is refused as well
+// ("null" is accepted: some browsers send it for a page's own forms).
 bool fromOwnPage() {
   String origin = server.header("Origin");
-  bool originOk = !origin.length() || origin == "http://" + server.hostHeader();
-  if (originOk && server.arg("t") == formToken) return true;
-  server.send(403, "text/plain", "Forbidden: please reload the settings page and try again");
+  bool originOk = !origin.length() || origin == "null" || origin.equalsIgnoreCase("http://" + server.hostHeader());
+  if (!originOk) {
+    server.send(403, "text/plain", "Forbidden");
+    return false;
+  }
+  if (server.arg("t") == formToken) return true;
+  // Usually the device restarted after the page was opened: show the page again.
+  server.sendHeader("Location", "/?stale=1");
+  server.send(303);
   return false;
 }
 void securityHeaders() {
@@ -60,7 +67,7 @@ void securityHeaders() {
                     "frame-ancestors 'none'; base-uri 'none'");
   server.sendHeader("X-Frame-Options", "DENY");
   server.sendHeader("X-Content-Type-Options", "nosniff");
-  server.sendHeader("Referrer-Policy", "no-referrer");
+  server.sendHeader("Referrer-Policy", "same-origin");
   server.sendHeader("Cache-Control", "no-store");
 }
 
@@ -448,11 +455,13 @@ void webInit(AppState* state, void* lock) {
   server.collectHeaders(headers, 1);
   server.on("/", HTTP_GET, [] {
     if (!allowed()) return;
-    bool ok = server.hasArg("ok"), upd = server.hasArg("upd");
-    sendPage(ok ? TR("Tallennettu. Muutokset näkyvät laitteella heti.", "Saved. The changes show on the device right away.")
+    bool ok = server.hasArg("ok"), upd = server.hasArg("upd"), stale = server.hasArg("stale");
+    sendPage(stale ? TR("Laite käynnistyi uudelleen sivun avaamisen jälkeen, joten muutoksia ei tallennettu. Tee ne uudelleen.",
+                        "The device restarted after this page was opened, so nothing was saved. Please make the changes again.")
+           : ok ? TR("Tallennettu. Muutokset näkyvät laitteella heti.", "Saved. The changes show on the device right away.")
            : upd ? TR("Tarkistetaan päivitystä. Jos uusi versio löytyy, laite asentaa sen ja käynnistyy uudelleen (noin minuutti).",
                       "Checking for an update. If there's a new version, the device installs it and restarts (about a minute).")
-                 : nullptr, false);
+                 : nullptr, stale);
   });
   server.on("/save", HTTP_POST, handleSave);
   server.on("/restart", HTTP_POST, handleRestart);
