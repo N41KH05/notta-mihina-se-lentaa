@@ -788,6 +788,58 @@ size_t gunzip(const uint8_t* in, size_t n, uint8_t** out, size_t maxOut) {
 // ---------------------------------------------------------------------------
 //  Firmware updates: GitHub releases tagged build-<number>, each with a SkyTracker.bin
 // ---------------------------------------------------------------------------
+namespace {
+// Like getJson, but reads the whole (small) body first and parses it from memory, and
+// tries up to three times. A connection that drops halfway then costs a retry instead of
+// a failed check ("IncompleteInput").
+int getJsonWhole(const char* url, JsonDocument& doc, JsonDocument& filter, char* err, size_t errLen,
+                 size_t maxLen = 65536) {
+  int status = -1;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    WiFiClientSecure client;
+    client.useBuiltinCACertBundle();
+    client.setHandshakeTimeout(15);
+    HTTPClient http;
+    http.useHTTP10(true);
+    http.setTimeout(12000);
+    http.setUserAgent("SkyTracker desk display (personal, non-commercial)");
+    if (!http.begin(client, url)) { snprintf(err, errLen, "%s", TR("virheellinen osoite", "invalid address")); return -1; }
+    politeWait();
+    status = http.GET();
+    if (status == 200) {
+      int len = http.getSize();                // -1 if the server didn't say
+      size_t cap = len > 0 ? (size_t)len : maxLen;
+      char* buf = cap <= maxLen ? (char*)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM) : nullptr;
+      size_t got = 0;
+      WiFiClient* st = http.getStreamPtr();
+      uint32_t t0 = millis();
+      while (buf && got < cap && millis() - t0 < 20000) {
+        int n = st->readBytes(buf + got, cap - got);
+        if (n > 0) got += n;
+        else if (!st->connected() && !st->available()) break;   // closed: that's all of it
+        else delay(5);
+      }
+      DeserializationError e = buf ? deserializeJson(doc, buf, got, DeserializationOption::Filter(filter))
+                                   : DeserializationError::NoMemory;
+      heap_caps_free(buf);
+      http.end();
+      if (!e && (len <= 0 || got == (size_t)len)) return 200;
+      snprintf(err, errLen, TR("virheellinen vastaus (%s, %u/%d tavua)", "invalid response (%s, %u/%d bytes)"),
+               e ? e.c_str() : "short", (unsigned)got, len);
+      Serial.printf("GET %s -> %s, retrying\n", url, err);
+      status = -2;
+      delay(1000);
+      continue;
+    }
+    if (status > 0) snprintf(err, errLen, "HTTP %d", status);
+    else snprintf(err, errLen, "%s", WiFi.status() == WL_CONNECTED ? TR("ei yhteyttä palvelimeen", "no connection to server") : TR("Wi-Fi ei ole yhdistetty", "Wi-Fi not connected"));
+    http.end();
+    if (status > 0) return status;           // a real answer (403, 404...): no point retrying
+  }
+  return status;
+}
+}  // namespace
+
 int netLatestFirmware(char* url, size_t urlLen, uint32_t* size, char* notes, size_t notesLen,
                       char* err, size_t errLen) {
   JsonDocument filter;
@@ -798,7 +850,7 @@ int netLatestFirmware(char* url, size_t urlLen, uint32_t* size, char* notes, siz
   a["browser_download_url"] = true;
   a["size"] = true;
   JsonDocument doc(&psram);
-  int status = getJson("https://api.github.com/repos/" UPDATE_REPO "/releases/latest", doc, filter, err, errLen);
+  int status = getJsonWhole("https://api.github.com/repos/" UPDATE_REPO "/releases/latest", doc, filter, err, errLen);
   if (status != 200) {
     if (status == 404) snprintf(err, errLen, "%s", TR("ei julkaisuja", "no releases"));
     else if (status > 0) snprintf(err, errLen, "GitHub: HTTP %d", status);

@@ -114,7 +114,7 @@ Place places[MAX_PLACES];
 int nPlaces = -1;               // -1 searching, -2 failed
 char flightQuery[16] = "";
 const int MAX_FOUND = 6;
-Plane found[MAX_FOUND];
+Plane* found = nullptr;          // MAX_FOUND planes, in PSRAM (allocated on first search)
 int nFound = -1;                // -1 searching, -2 failed
 char ssid[33] = "", pass[64] = "", field[64] = "";
 bool secure = true, showPw = false;
@@ -542,6 +542,8 @@ void drawPlaces(Adafruit_GFX& g, uint32_t now) {
 
 // ---- screens: flight search results ----------------------------------------------------
 void startFlightSearch() {
+  if (!found) found = (Plane*)renderAlloc(sizeof(Plane) * MAX_FOUND);
+  if (!found) return;
   nFound = -1;
   hooks->flightSearch(flightQuery);
   screen = S_FLIGHTS;

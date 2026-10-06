@@ -393,13 +393,14 @@ void finishPickHome(bool save) {
 // ---- Finding a flight: the planes already on the map first, then the whole world ----------
 struct {
   char query[16];
-  Plane res[6];
+  Plane* res;                          // 6 planes, in PSRAM
   volatile int n = -1;                 // -1 searching, -2 failed, else how many
   volatile bool busy = false;
 } flightSearch;
 
 void flightSearchTask(void*) {
-  static Plane local[6], online[6];
+  static Plane* local = (Plane*)heap_caps_malloc(sizeof(Plane) * 12, MALLOC_CAP_SPIRAM);
+  Plane* online = local + 6;
   bool exact;
   xSemaphoreTake(lock, portMAX_DELAY);
   int nLocal = appFindFlights(state, flightSearch.query, local, 6, &exact);
@@ -419,6 +420,7 @@ void flightSearchTask(void*) {
 }
 void hFlightSearch(const char* q) {
   if (flightSearch.busy) return;
+  if (!flightSearch.res) flightSearch.res = (Plane*)heap_caps_malloc(sizeof(Plane) * 6, MALLOC_CAP_SPIRAM);
   snprintf(flightSearch.query, sizeof flightSearch.query, "%s", q);
   flightSearch.n = -1;
   flightSearch.busy = true;
