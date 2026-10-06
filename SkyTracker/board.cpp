@@ -92,6 +92,17 @@ void boardPanelOff() {
   exWrite(CH422G_OUT, exio);
 }
 
+void boardPanelReset(uint32_t ms) {
+  xSemaphoreTake(i2cLock, portMAX_DELAY);
+  exSet(EXIO_LCD_RST, false);
+  xSemaphoreGive(i2cLock);
+  delay(ms);
+  xSemaphoreTake(i2cLock, portMAX_DELAY);
+  exSet(EXIO_LCD_RST, true);
+  xSemaphoreGive(i2cLock);
+  delay(150);
+}
+
 void boardDeepRestart(uint32_t ms) {
   boardPanelOff();
   delay(50);

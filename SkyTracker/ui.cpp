@@ -868,7 +868,7 @@ void uiTap(int x, int y, uint32_t now, AppState& s) {
         hooks->current(cur, sizeof cur, ip, sizeof ip, &r);
         if (cur[0]) { hooks->forget(); uiOpenWifi(TR("Verkko unohdettiin. Valitse uusi verkko.", "Network forgotten. Choose a new network."), false, false); }
       } else if (SET_DEMO.hit(x, y) && !s.demo) { hooks->useDemo(); screen = S_NONE; }
-      else if (x >= 24 && x < 776 && y >= 330 && y < 356) { screenTestUntil = now + 20000; screen = S_NONE; }   // STATUS heading
+      else if (x >= 24 && x < 776 && y >= 330 && y < 356) { screenTestUntil = now + 4 * 12000; screen = S_NONE; }   // STATUS heading
       else if (SET_UPDATE.hit(x, y)) {
         if (fwUpdate.state == UPD_AVAILABLE) screen = S_UPDATE;
         else if (fwUpdate.state != UPD_CHECKING && !checkAsked) {

@@ -8,6 +8,8 @@ uint16_t* boardBackBuffer();       // frame buffer to draw the next frame into
 const uint16_t* boardFrontBuffer();  // the frame on screen now
 void boardPresent();               // show it (tear-free) and swap buffers
 void boardBacklight(bool on);
+// Hold the panel's reset line low for ms (backlight left as it is), then let it go.
+void boardPanelReset(uint32_t ms);
 // Backlight off and the panel held in reset (the expander keeps it so through a restart).
 // Works before boardInit() too.
 void boardPanelOff();

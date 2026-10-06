@@ -55,8 +55,8 @@ struct SdStatus {
 };
 inline SdStatus sdStatus;
 
-// Screen test (tap the STATUS heading in Settings): a still picture and nothing else drawn
-// or downloaded until this millis(), to tell a screen fault from a busy memory bus.
+// Screen test (tap the STATUS heading in Settings): four 12-second steps, each taking away
+// one more possible cause of lines on the screen (see screenTest() in SkyTracker.ino).
 inline volatile uint32_t screenTestUntil = 0;
 
 enum DarkMode : uint8_t { DARK_OFF = 0, DARK_ON = 1, DARK_AUTO = 2 };

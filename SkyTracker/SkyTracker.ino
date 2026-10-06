@@ -959,29 +959,67 @@ void setup() {
 // ---------------------------------------------------------------------------
 //  Main loop: handle touches, redraw a few times a second
 // ---------------------------------------------------------------------------
-// Screen test: draw a still pattern into both buffers once, then nothing at all until it
-// ends. If lines still show, the memory bus is not the cause (nothing else is using it).
+// Screen test, in four steps of 12 s. Each takes away one more possible cause of lines,
+// so the first step where they go away names the culprit:
+//   1. nothing drawn or downloaded (the memory bus is quiet; Wi-Fi still on)
+//   2. Wi-Fi radio off as well (its bursts load the power supply and the memory)
+//   3. the panel's reset line pulsed (a panel that locked on wrongly starts over)
+//   4. backlight off and the panel held in reset for 3 s, then started again
+// Afterwards Wi-Fi is switched back on and everything carries on.
+static const uint32_t TEST_STEP_MS = 12000;
+static void testPicture(int step) {
+  static const char* const fi[] = {"Mitään ei piirretä eikä ladata", "Wi-Fi on nyt pois päältä", "Näyttöpaneeli nollattu", "Paneeli sammutettiin ja käynnistettiin"};
+  static const char* const en[] = {"Nothing is drawn or downloaded", "Wi-Fi is now switched off", "The screen panel was reset", "The panel was switched off and on"};
+  for (int k = 0; k < 2; k++) {
+    canvas.use(boardBackBuffer());
+    canvas.fillScreen(0x0000);
+    static const uint16_t bars[] = {0xF800, 0x07E0, 0x001F, 0xFFE0, 0xF81F, 0x07FF, 0xFFFF, 0x8410};
+    for (int i = 0; i < 8; i++) canvas.fillRect(i * 100, 0, 100, 100, bars[i]);
+    for (int x = 0; x < SCREEN_W; x += 20) canvas.drawFastVLine(x, 120, 160, 0xFFFF);
+    for (int y = 120; y < 280; y += 20) canvas.drawFastHLine(0, y, SCREEN_W, 0xFFFF);
+    char t[96];
+    snprintf(t, sizeof t, TR("NÄYTTÖTESTI  VAIHE %d / 4", "SCREEN TEST  STEP %d / 4"), step + 1);
+    text(canvas, 24, 300, t, B30, 0xFFE0);
+    text(canvas, 24, 344, TR(fi[step], en[step]), B22, 0xFFFF);
+    text(canvas, 24, 392, TR("Katso, missä vaiheessa viivat katoavat ensimmäisen kerran.",
+                             "Note the first step where the lines go away."), R14, 0xC618);
+    text(canvas, 24, 414, TR("Kosketus ei tee testin aikana mitään (kestää alle minuutin).",
+                             "Touch does nothing until it's over (under a minute)."), R14, 0xC618);
+    boardPresent();
+  }
+}
 static bool screenTest() {
-  static bool shown = false;
-  if ((int32_t)(millis() - screenTestUntil) >= 0) {
-    if (shown) { shown = false; baseStale = true; Ev e; while (xQueueReceive(events, &e, 0)) {} }
+  static int shown = -1;                         // step on screen now (-1: no test)
+  static uint32_t start = 0;
+  uint32_t now = millis();
+  if ((int32_t)(now - screenTestUntil) >= 0) {
+    if (shown >= 0) {                            // over: Wi-Fi back on, normal screen
+      shown = -1;
+      boardBacklight(true);
+      WiFi.mode(WIFI_STA);
+      if (savedSsid[0]) WiFi.begin(savedSsid, savedPass[0] ? savedPass : nullptr);
+      baseStale = true;
+      Ev e;
+      while (xQueueReceive(events, &e, 0)) {}
+      if (fetchTask) xTaskNotifyGive(fetchTask);
+      Serial.println("Screen test over");
+    }
     return false;
   }
-  if (!shown) {
-    for (int k = 0; k < 2; k++) {
-      uint16_t* f = boardBackBuffer();
-      canvas.use(f);
-      canvas.fillScreen(0x0000);
-      static const uint16_t bars[] = {0xF800, 0x07E0, 0x001F, 0xFFE0, 0xF81F, 0x07FF, 0xFFFF, 0x8410};
-      for (int i = 0; i < 8; i++) canvas.fillRect(i * 100, 0, 100, 120, bars[i]);
-      for (int x = 0; x < SCREEN_W; x += 20) canvas.drawFastVLine(x, 140, 200, 0xFFFF);
-      for (int y = 140; y < 340; y += 20) canvas.drawFastHLine(0, y, SCREEN_W, 0xFFFF);
-      text(canvas, 24, 370, TR("NÄYTTÖTESTI: mitään ei piirretä 20 sekuntiin", "SCREEN TEST: nothing is drawn for 20 seconds"), B22, 0xFFFF);
-      text(canvas, 24, 410, TR("Jos viivoja näkyy yhä, vika on näytössä, ei muistiväylässä.", "Lines still showing now: the fault is in the screen, not the memory bus."), R14, 0xC618);
-      boardPresent();
+  if (shown < 0) { start = now; screenTestUntil = now + 4 * TEST_STEP_MS; }
+  int step = (int)((now - start) / TEST_STEP_MS);
+  if (step > 3) step = 3;
+  if (step != shown) {
+    Serial.printf("Screen test step %d\n", step + 1);
+    if (step == 1) WiFi.mode(WIFI_OFF);
+    if (step == 2) boardPanelReset(20);
+    if (step == 3) {
+      boardBacklight(false);
+      boardPanelReset(3000);
+      boardBacklight(true);
     }
-    shown = true;
-    Serial.println("Screen test: nothing drawn for 20 s");
+    shown = step;
+    testPicture(step);
   }
   Ev e;
   while (xQueueReceive(events, &e, 0)) {}          // ignore touches meanwhile
