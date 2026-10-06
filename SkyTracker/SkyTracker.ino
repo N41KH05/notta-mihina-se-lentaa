@@ -14,6 +14,7 @@
 #include <freertos/queue.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
+#include <esp_ota_ops.h>
 #include <esp_timer.h>
 #include "config.h"
 #include "model.h"
@@ -50,12 +51,14 @@ void touchTask(void*) {
 // ---------------------------------------------------------------------------
 //  Background fetching (other CPU core)
 // ---------------------------------------------------------------------------
+void updateTick();
 void fetchLoop(void*) {
   esp_task_wdt_add(nullptr);           // restart the board if this task ever hangs
   for (;;) {
     esp_task_wdt_reset();
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(pollSeconds(state.nPlanes) * 1000));
     esp_task_wdt_reset();
+    updateTick();                      // new firmware? (also at night, with the screen off)
     if (state.night) continue;
     if (state.demo) {
       xSemaphoreTake(lock, portMAX_DELAY);
@@ -194,6 +197,7 @@ void loadSettings() {
   cfg.darkMode = prefs.getUChar("dark", cfg.darkMode) % 3;
   useDarkTheme(darkWanted(0));         // boot messages too, if dark is always on
   cfg.photos = prefs.getBool("photos", cfg.photos);
+  cfg.autoUpdate = prefs.getBool("autoUpd", cfg.autoUpdate);
   if (prefs.isKey("contact")) prefs.getString("contact", cfg.contact, sizeof cfg.contact);
   if (prefs.isKey("airlabs")) prefs.getString("airlabs", cfg.airlabsKey, sizeof cfg.airlabsKey);
   homeAsked = prefs.getBool("homeAsked", false) || prefs.isKey("homeLat");
@@ -323,6 +327,7 @@ void webSaved(bool homeMoved, bool keyChanged) {
   prefs.putChar("nightEnd", cfg.nightEnd);
   prefs.putUChar("dark", cfg.darkMode);
   prefs.putBool("photos", cfg.photos);
+  prefs.putBool("autoUpd", cfg.autoUpdate);
   prefs.putString("contact", cfg.contact);
   prefs.putString("airlabs", cfg.airlabsKey);
   prefs.putUChar("lang", language);
@@ -443,6 +448,69 @@ void restartNow(const char* why, bool quiet) {
   quietRestart = quiet ? QUIET_MAGIC : 0;
   delay(200);
   ESP.restart();
+}
+
+// ---------------------------------------------------------------------------
+//  Firmware updates (see config.h). Runs in the fetch task.
+// ---------------------------------------------------------------------------
+// A freshly installed build only counts as good once it has shown it works (below);
+// if it crashes or hangs before that, the bootloader starts the previous build again.
+extern "C" bool verifyRollbackLater() { return true; }   // replaces the core's own check
+void confirmFirmware() {
+  static bool done = false;
+  if (done) return;
+  bool working = (state.apiOk && state.updatedEpoch > 1 && !state.demo) || millis() > 10 * 60000UL;
+  if (!working) return;
+  done = true;
+  const esp_partition_t* run = esp_ota_get_running_partition();
+  esp_ota_img_states_t st;
+  if (esp_ota_get_state_partition(run, &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY) {
+    esp_ota_mark_app_valid_cancel_rollback();
+    Serial.printf("Firmware build %d confirmed\n", FW_BUILD);
+  }
+}
+
+static void updateProgress(int pct) { fwUpdate.percent = pct; }
+
+void updateTick() {
+  static uint32_t nextCheck = 120000;           // first look two minutes after starting
+  bool manual = fwUpdate.requested;
+  if (!manual && (int32_t)(millis() - nextCheck) < 0) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  fwUpdate.requested = false;
+  nextCheck = millis() + UPDATE_CHECK_HOURS * 3600000UL;
+  fwUpdate.state = UPD_CHECKING;
+  char url[256], err[64] = "";
+  uint32_t size = 0;
+  int latest = netLatestFirmware(url, sizeof url, &size, err, sizeof err);
+  fwUpdate.checkedEpoch = time(nullptr);
+  if (!latest) {
+    snprintf(fwUpdate.error, sizeof fwUpdate.error, "%s", err);
+    fwUpdate.state = UPD_FAILED;
+    Serial.printf("Update check: %s\n", err);
+    return;
+  }
+  fwUpdate.latest = latest;
+  Serial.printf("Update check: running build %d, newest %d\n", FW_BUILD, latest);
+  if (latest <= FW_BUILD) { fwUpdate.state = UPD_CURRENT; return; }
+  // Automatic only for builds that came from GitHub themselves (an Arduino IDE build is 0,
+  // and is kept until asked), and only when nobody has touched the screen for 10 minutes.
+  bool idle = millis() - lastInput > 10 * 60000UL && !uiActive();
+  if (!manual && !(cfg.autoUpdate && FW_BUILD > 0 && idle)) {
+    fwUpdate.state = UPD_AVAILABLE;
+    if (cfg.autoUpdate && FW_BUILD > 0) nextCheck = millis() + 15 * 60000UL;   // try again when idle
+    return;
+  }
+  Serial.printf("Installing build %d (%u bytes)\n", latest, (unsigned)size);
+  fwUpdate.percent = 0;
+  fwUpdate.state = UPD_INSTALLING;
+  if (netInstallFirmware(url, size, updateProgress, err, sizeof err)) {
+    restartNow("firmware update", !backlightOn);   // dark at night: stay dark
+    return;
+  }
+  snprintf(fwUpdate.error, sizeof fwUpdate.error, "%s", err);
+  fwUpdate.state = UPD_FAILED;
+  Serial.printf("Update failed: %s\n", err);
 }
 
 void watchdogInit() {
@@ -596,6 +664,18 @@ void setup() {
 void loop() {
   static uint32_t lastFrame = 0;
   webLoop();                                       // the phone settings page
+  confirmFirmware();
+  if (fwUpdate.state == UPD_INSTALLING) {          // the fetch task is writing new firmware
+    static uint32_t lastMsg = 0;
+    if (backlightOn && millis() - lastMsg > 500) {
+      lastMsg = millis();
+      char t[48];
+      snprintf(t, sizeof t, TR("%d %% valmiina, älä irrota virtaa", "%d %% done, keep it plugged in"), (int)fwUpdate.percent);
+      message(TR("Päivitetään ohjelmistoa", "Updating the software"), t);
+    }
+    delay(20);
+    return;
+  }
   wifiWatch();
   Ev e;
   bool got = false, viewChanged = false, dragging = false;

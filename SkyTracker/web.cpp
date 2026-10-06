@@ -15,6 +15,8 @@ void webSaved(bool homeMoved, bool keyChanged);   // SkyTracker.ino: store and a
 const char* resetReasonText();                    // SkyTracker.ino: why it last started
 uint32_t uptimeMinutes();
 
+extern TaskHandle_t fetchTask;      // SkyTracker.ino: woken for "update now"
+
 namespace {
 WebServer server(80);
 AppState* st = nullptr;
@@ -275,7 +277,36 @@ void sendPage(const char* msg, bool error) {
           "to keep the current key.");
   o += "</p></section>";
 
+  // ---- software
+  o += "<section class=card><h2>"; o += TR("Ohjelmisto", "Software"); o += "</h2><p>";
+  char ub[96];
+  if (FW_BUILD > 0) snprintf(ub, sizeof ub, TR("Versio: build %d", "Version: build %d"), FW_BUILD);
+  else snprintf(ub, sizeof ub, "%s", TR("Versio: käännetty Arduino IDE:ssä", "Version: built in the Arduino IDE"));
+  o += ub; o += "<br>";
+  switch (fwUpdate.state) {
+    case UPD_NONE: o += TR("Päivityksiä ei ole vielä tarkistettu.", "Not checked for updates yet."); break;
+    case UPD_CHECKING: o += TR("Tarkistetaan päivityksiä…", "Checking for updates…"); break;
+    case UPD_CURRENT: snprintf(ub, sizeof ub, TR("Ajan tasalla (uusin on build %d).", "Up to date (the newest is build %d)."), fwUpdate.latest); o += ub; break;
+    case UPD_AVAILABLE:
+      snprintf(ub, sizeof ub, TR("Build %d on saatavilla. ", "Build %d is available. "), fwUpdate.latest); o += ub;
+      o += cfg.autoUpdate && FW_BUILD > 0 ? TR("Se asennetaan, kun laitetta ei ole käytetty hetkeen.", "It installs once the device hasn't been used for a while.")
+                                          : TR("Asenna se alla olevasta napista.", "Install it with the button below.");
+      break;
+    case UPD_INSTALLING: snprintf(ub, sizeof ub, TR("Asennetaan… %d %%", "Installing… %d %%"), (int)fwUpdate.percent); o += ub; break;
+    case UPD_FAILED: o += TR("Viimeisin tarkistus epäonnistui: ", "The last check failed: "); esc(o, fwUpdate.error); break;
+  }
+  o += "</p><label class=chk><input type=checkbox name=autoupd"; if (cfg.autoUpdate) o += " checked";
+  o += "> "; o += TR("Päivitä automaattisesti", "Update automatically"); o += "</label><p class=help>";
+  o += TR("Uudet versiot tulevat GitHubista (" UPDATE_REPO "). Laite tarkistaa ne muutaman tunnin välein ja asentaa uuden, "
+          "kun kukaan ei ole koskenut näyttöön 10 minuuttiin. Jos uusi versio ei käynnisty kunnolla, laite palaa edelliseen.",
+          "New versions come from GitHub (" UPDATE_REPO "). The device checks every few hours and installs a new one "
+          "once nobody has touched the screen for 10 minutes. If a new version doesn't start properly, it goes back to the previous one.");
+  o += "</p></section>";
+
   o += "<button class=save>"; o += TR("Tallenna", "Save"); o += "</button></form>";
+  o += "<form method=post action=/update><input type=hidden name=t value=";
+  o += formToken;
+  o += "><button class=ghost>"; o += TR("Tarkista ja asenna päivitys nyt", "Check for an update and install it now"); o += "</button></form>";
   o += "<form method=post action=/restart><input type=hidden name=t value=";
   o += formToken;
   o += "><label class=chk><input type=checkbox name=sure required> ";
@@ -350,6 +381,7 @@ void handleSave() {
   if (dark.length()) c.darkMode = dark == "on" ? DARK_ON : dark == "auto" ? DARK_AUTO : DARK_OFF;
 
   c.photos = server.hasArg("photos");
+  c.autoUpdate = server.hasArg("autoupd");
   String contact = server.arg("contact");
   contact.trim();
   if (contact.length() >= sizeof c.contact || !plainText(contact, "()\"'<>;\\")) err += TR("Yhteystieto on liian pitkä tai siinä on kiellettyjä merkkejä.<br>",
@@ -386,6 +418,14 @@ void handleSave() {
   server.send(303);
 }
 
+void handleUpdate() {
+  if (!allowed() || !fromOwnPage()) return;
+  fwUpdate.requested = true;
+  xTaskNotifyGive(fetchTask);
+  server.sendHeader("Location", "/?upd=1");
+  server.send(303);
+}
+
 void handleRestart() {
   if (!allowed() || !fromOwnPage()) return;
   if (!server.hasArg("sure")) { server.sendHeader("Location", "/"); server.send(303); return; }
@@ -408,12 +448,15 @@ void webInit(AppState* state, void* lock) {
   server.collectHeaders(headers, 1);
   server.on("/", HTTP_GET, [] {
     if (!allowed()) return;
-    bool ok = server.hasArg("ok");
+    bool ok = server.hasArg("ok"), upd = server.hasArg("upd");
     sendPage(ok ? TR("Tallennettu. Muutokset näkyvät laitteella heti.", "Saved. The changes show on the device right away.")
-                : nullptr, false);
+           : upd ? TR("Tarkistetaan päivitystä. Jos uusi versio löytyy, laite asentaa sen ja käynnistyy uudelleen (noin minuutti).",
+                      "Checking for an update. If there's a new version, the device installs it and restarts (about a minute).")
+                 : nullptr, false);
   });
   server.on("/save", HTTP_POST, handleSave);
   server.on("/restart", HTTP_POST, handleRestart);
+  server.on("/update", HTTP_POST, handleUpdate);
   server.onNotFound([] { server.sendHeader("Location", "/"); server.send(302); });
 }
 

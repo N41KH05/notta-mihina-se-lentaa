@@ -22,6 +22,7 @@ You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa
 - A dark mode in amber and green, either always on or switching at sunset and sunrise.
 - Wi-Fi and home location are set up on the touchscreen. Home can be found by address search.
 - A small settings page for your phone: units, language, dark mode, home, night hours, photos, and an optional AirLabs key for scheduled times.
+- It updates itself: GitHub builds the firmware on every change, and the device installs new builds when nobody is using it, falling back to the previous one if a build doesn't start.
 - It's meant to be left running. It reconnects after power or router cuts, has a watchdog, turns the screen off at night and restarts itself once a day while idle.
 
 ## Building one

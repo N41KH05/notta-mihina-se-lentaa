@@ -1,0 +1,65 @@
+# Builds the firmware on every push that changes it and publishes it as a release
+# (tag build-<number>, file SkyTracker.bin). Devices check for new releases and
+# install them by themselves (see "Firmware updates" in SkyTracker/config.h).
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "SkyTracker/**"
+      - ".github/workflows/firmware.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: firmware
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Cache the ESP32 tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          key: arduino-esp32-3.3.12-gfx-1.12.6-json-7.4.2
+
+      - name: Install the board package and libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.12
+          arduino-cli lib install "Adafruit GFX Library@1.12.6" "Adafruit BusIO@1.17.4" "ArduinoJson@7.4.2"
+
+      - name: Build
+        run: |
+          arduino-cli compile \
+            --fqbn "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=custom,CDCOnBoot=cdc" \
+            --build-property "compiler.cpp.extra_flags=-DFW_BUILD=${{ github.run_number }}" \
+            --output-dir out SkyTracker
+          cp out/SkyTracker.ino.bin SkyTracker.bin
+          sha256sum SkyTracker.bin
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git log -1 --format='%s%n%n%b' > notes.txt
+          echo "" >> notes.txt
+          echo "SHA-256: $(sha256sum SkyTracker.bin | cut -d' ' -f1)" >> notes.txt
+          gh release create "build-${{ github.run_number }}" SkyTracker.bin \
+            --title "Firmware build ${{ github.run_number }}" \
+            --notes-file notes.txt \
+            --target "${{ github.sha }}" \
+            --latest

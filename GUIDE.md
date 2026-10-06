@@ -98,6 +98,21 @@ Anyone on your Wi-Fi can open the page. If that bothers you, set `WEB_PASSWORD` 
 - Around 04:00 it restarts itself if nobody is using it, and keeps the screen dark while doing so. It also restarts if memory gets low.
 - The phone page shows the uptime and why it last started. "Voltage dip" means the charger or cable is too weak.
 
+## Firmware updates
+
+The device updates itself. Every time the code on GitHub changes, GitHub Actions builds the firmware and publishes it as a release (`build-123` and so on). The device checks every three hours, and when there's a newer build it installs it once nobody has touched the screen for 10 minutes: the screen shows "Updating the software" with a percentage, and after about a minute it restarts on the new version. At night it does this with the screen off.
+
+If a new build doesn't start properly (it crashes, or never gets as far as showing planes), the board goes back to the previous build by itself on the next restart.
+
+The phone settings page shows the version and the update status, has a button to check and install right away, and a checkbox to turn automatic updates off.
+
+Good to know:
+
+- **Moving to automatic updates takes one USB upload.** Updates need two program slots in flash, and the partition table that has them only gets onto the board over USB. After that one upload, Wi-Fi, home and other settings are kept as before.
+- **A build you upload from the Arduino IDE is never replaced automatically.** It counts as version 0, so you can try your own changes in peace. The "install now" button on the phone page still works, and once a GitHub build is on the board, automatic updates continue from there.
+- **GitHub builds use the `config.h` from the repository.** Settings made on the screen or the phone page are kept, but if you changed `config.h` yourself (for example `WEB_PASSWORD` or `LCD_PCLK_MHZ`), an update replaces those with the repository's values. Make such changes in your own fork, or turn automatic updates off.
+- **In a fork**, set `UPDATE_REPO` in `config.h` to your own repository and enable Actions there.
+
 ## Units and saved settings
 
 Distance (km or nm), speed (km/h or kt), altitude (feet or metres) language (English or Suomi) and dark mode are switched in Settings. The defaults are in `config.h`: `DEFAULT_DISTANCE_KM`, `DEFAULT_SPEED_KMH`, `DEFAULT_ALTITUDE_M`, `DEFAULT_LANGUAGE` and `DEFAULT_DARK_MODE`.

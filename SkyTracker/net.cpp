@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <Update.h>
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -684,6 +685,89 @@ size_t gunzip(const uint8_t* in, size_t n, uint8_t** out, size_t maxOut) {
   return size;
 }
 }  // namespace
+
+// ---------------------------------------------------------------------------
+//  Firmware updates: GitHub releases tagged build-<number>, each with a SkyTracker.bin
+// ---------------------------------------------------------------------------
+int netLatestFirmware(char* url, size_t urlLen, uint32_t* size, char* err, size_t errLen) {
+  JsonDocument filter;
+  filter["tag_name"] = true;
+  JsonObject a = filter["assets"][0].to<JsonObject>();
+  a["name"] = true;
+  a["browser_download_url"] = true;
+  a["size"] = true;
+  JsonDocument doc(&psram);
+  int status = getJson("https://api.github.com/repos/" UPDATE_REPO "/releases/latest", doc, filter, err, errLen);
+  if (status != 200) {
+    if (status == 404) snprintf(err, errLen, "%s", TR("ei julkaisuja", "no releases"));
+    else if (status > 0) snprintf(err, errLen, "GitHub: HTTP %d", status);
+    return 0;
+  }
+  const char* tag = doc["tag_name"] | "";
+  if (strncmp(tag, "build-", 6) != 0 || atoi(tag + 6) <= 0) {
+    snprintf(err, errLen, "%s %s", TR("outo julkaisu", "unexpected release"), tag);
+    return 0;
+  }
+  for (JsonObject f : doc["assets"].as<JsonArray>()) {
+    if (strcmp(f["name"] | "", "SkyTracker.bin") != 0) continue;
+    copyStr(url, urlLen, f["browser_download_url"] | "");
+    *size = f["size"] | 0u;
+    if (url[0] && *size > 100000) return atoi(tag + 6);
+  }
+  snprintf(err, errLen, "%s", TR("julkaisusta puuttuu SkyTracker.bin", "release has no SkyTracker.bin"));
+  return 0;
+}
+
+bool netInstallFirmware(const char* url, uint32_t size, void (*progress)(int pct), char* err, size_t errLen) {
+  WiFiClientSecure client;
+  client.useBuiltinCACertBundle();
+  client.setHandshakeTimeout(15);
+  HTTPClient http;
+  http.useHTTP10(true);
+  http.setTimeout(15000);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);   // GitHub sends the file from another host
+  http.setUserAgent("SkyTracker desk display (personal, non-commercial)");
+  if (!http.begin(client, url)) { snprintf(err, errLen, "%s", TR("virheellinen osoite", "invalid address")); return false; }
+  int status = http.GET();
+  if (status != 200) {
+    snprintf(err, errLen, "%s %d", TR("lataus epäonnistui, HTTP", "download failed, HTTP"), status);
+    http.end();
+    return false;
+  }
+  int len = http.getSize();
+  if (len <= 0 || (uint32_t)len != size) {
+    snprintf(err, errLen, "%s", TR("väärän kokoinen tiedosto", "file has the wrong size"));
+    http.end();
+    return false;
+  }
+  if (!Update.begin(len, U_FLASH)) {
+    snprintf(err, errLen, "%s", Update.errorString());
+    http.end();
+    return false;
+  }
+  static uint8_t buf[4096];
+  WiFiClient* st = http.getStreamPtr();
+  int done = 0, lastPct = -1;
+  uint32_t lastData = millis();
+  while (done < len && millis() - lastData < 20000) {
+    esp_task_wdt_reset();
+    int n = st->readBytes(buf, min((int)sizeof buf, len - done));
+    if (n <= 0) { delay(5); continue; }
+    lastData = millis();
+    if (Update.write(buf, n) != (size_t)n) break;
+    done += n;
+    int pct = (int)((int64_t)done * 100 / len);
+    if (pct != lastPct && progress) progress(lastPct = pct);
+  }
+  http.end();
+  // end() checks the whole image (its SHA-256 included) before switching to it.
+  if (done != len || !Update.end(true)) {
+    snprintf(err, errLen, "%s", done != len ? TR("lataus katkesi", "download interrupted") : Update.errorString());
+    Update.abort();
+    return false;
+  }
+  return true;
+}
 
 void netFetchPhoto(void* lock) {
   static uint16_t* ready = nullptr;       // finished picture, copied in under the lock

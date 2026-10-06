@@ -7,6 +7,11 @@ void netInit();
 void netFetchPlanes(AppState& s, void* lock);
 // Resolve one pending route lookup, if any. Takes the lock itself.
 void netLookupRoute(AppState& s, void* lock);
+// Firmware updates from GitHub releases (UPDATE_REPO). netLatestFirmware returns the newest
+// build number (0 on failure, with err set) and the download address of its SkyTracker.bin.
+int netLatestFirmware(char* url, size_t urlLen, uint32_t* size, char* err, size_t errLen);
+// Downloads it into the other app slot; true when it's ready to start (then restart).
+bool netInstallFirmware(const char* url, uint32_t size, void (*progress)(int pct), char* err, size_t errLen);
 // Fetch the photo for the selected plane, if one was requested. Takes the lock itself.
 void netFetchPhoto(void* lock);
 // Fetch the selected plane's flight path, if one was requested. Takes the lock itself.
