@@ -60,11 +60,12 @@
 #define POLL_SECONDS    4          // fresh positions this often (services allow 1/s)
 #define POLL_SECONDS_BUSY 8        // ...but only this often with hundreds of planes in view:
 #define BUSY_PLANES     250        //   big downloads; the planes keep gliding in between
-#define FRAME_MS        200        // planes glide between fetches: redraw this often
+#define FRAME_MS        250        // planes glide between fetches: redraw this often
 #define FRAME_MS_TOUCH  50         // while a finger moves the map: at most 20 frames a second
-// The screen has no memory of its own: the ESP32 sends it the whole picture ~30 times a
-// second from PSRAM. Lower this (e.g. 10) if lines or a sideways shift still appear.
-#define LCD_PCLK_MHZ    12
+// The screen has no memory of its own: the ESP32 sends it the whole picture ~25 times a
+// second from PSRAM, over the same bus the program code is read from. 10 MHz leaves
+// headroom on that bus; higher values showed lines in some builds.
+#define LCD_PCLK_MHZ    10
 #define HIDE_ON_GROUND  true
 
 // ---- Plane photos (Planespotters.net) -----------------------------------------------

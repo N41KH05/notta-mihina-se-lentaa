@@ -35,6 +35,7 @@ void renderMessage(Adafruit_GFX& g, const char* big, const char* small);
 // "Update in progress" popup with a progress bar, drawn over whatever is already there.
 // pct < 0: still connecting; 100: checking the download before switching to it.
 void renderUpdatePopup(Adafruit_GFX& g, int pct, int build);
+static const int UPDATE_POPUP_Y0 = 125, UPDATE_POPUP_Y1 = 355;   // rows it covers (with its shadow)
 
 // What is under a touch at (x, y)?
 enum UiHit { HIT_NONE, HIT_MAP, HIT_ZOOM_IN, HIT_ZOOM_OUT, HIT_HOME, HIT_FOLLOW, HIT_CLOSE,

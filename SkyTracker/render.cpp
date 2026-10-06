@@ -1410,7 +1410,7 @@ void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm
 }
 
 void renderUpdatePopup(Adafruit_GFX& g, int pct, int build) {
-  const int cw = 460, ch = 210, cx = (W - cw) / 2, cy = (H - ch) / 2;
+  const int cw = 460, ch = 210, cx = (W - cw) / 2, cy = (H - ch) / 2;   // inside UPDATE_POPUP_Y0..Y1
   g.fillRoundRect(cx + 3, cy + 5, cw, ch, 14, C_SHADOW);
   g.fillRoundRect(cx, cy, cw, ch, 14, C_SURFACE);
   g.drawRoundRect(cx, cy, cw, ch, 14, C_BTN_EDGE);

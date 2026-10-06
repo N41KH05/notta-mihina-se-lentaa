@@ -693,20 +693,25 @@ void loop() {
   static bool popupBack = false;
   if (fwUpdate.state == UPD_INSTALLING || fwUpdate.install) {   // (install: pressed, about to start)
     static uint32_t lastPopup = 0;
-    static int shownPct = -2;
+    static int shownPct = -2, fullFrames = 0;
     if (backlightOn) {
       if (!popupBack) {
         const uint16_t* front = boardFrontBuffer();
         for (int i = 0; i < SCREEN_W * SCREEN_H; i++) baseBuf[i] = (front[i] >> 1) & 0x7BEF;   // half brightness
         popupBack = true;
         shownPct = -2;
+        fullFrames = 0;
       }
       int pct = fwUpdate.state == UPD_INSTALLING ? (int)fwUpdate.percent : -1;
       if (pct != shownPct && millis() - lastPopup > 150) {
         lastPopup = millis();
         shownPct = pct;
+        // The first two frames fill both buffers with the dimmed screen; after that only
+        // the popup's strip is redrawn (less PSRAM traffic while the download needs it).
         uint16_t* fbuf = boardBackBuffer();
-        memcpy(fbuf, baseBuf, SCREEN_W * SCREEN_H * 2);
+        if (fullFrames < 2) { memcpy(fbuf, baseBuf, SCREEN_W * SCREEN_H * 2); fullFrames++; }
+        else memcpy(fbuf + UPDATE_POPUP_Y0 * SCREEN_W, baseBuf + UPDATE_POPUP_Y0 * SCREEN_W,
+                    (UPDATE_POPUP_Y1 - UPDATE_POPUP_Y0) * SCREEN_W * 2);
         canvas.use(fbuf);
         renderUpdatePopup(canvas, pct, fwUpdate.latest);
         boardPresent();

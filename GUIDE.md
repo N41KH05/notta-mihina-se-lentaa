@@ -151,7 +151,7 @@ Open Tools → Serial Monitor at 115200 baud (on the USB port) to see what it's 
 
 - **Settings page won't open.** The phone has to be on the same Wi-Fi, not mobile data or a guest network. The address can change after a router restart; check it in Settings.
 - **Black screen, and "LCD init failed" or "No PSRAM" in the log.** PSRAM must be set to OPI PSRAM.
-- **The picture jitters, flickers or shifts sideways**, especially while dragging or zooming. The screen has no memory of its own, so the ESP32 streams the picture to it continuously from PSRAM, and heavy drawing can make that stream late. Lower `LCD_PCLK_MHZ` in `config.h` (12 by default; try 10) and upload again. If it still happens, please open an issue.
+- **The picture jitters, flickers or shifts sideways**, especially while dragging or zooming. The screen has no memory of its own, so the ESP32 streams the picture to it continuously from PSRAM, and heavy drawing can make that stream late. Lower `LCD_PCLK_MHZ` in `config.h` (10 by default; try 9) and upload again. If it still happens, please open an issue.
 - **Touch doesn't work.** The log should show "Touch controller GT911 at 0x5D" (or 0x14). If not, press RESET.
 - **"No flight data".** The panel lists each service and what went wrong. "Wi-Fi not connected" or "no connection to server" is your network; "HTTP 403" means that service refused, and the next one is tried.
 - **No photos.** The log has a "Photo for ..." line per plane. Check that the contact email is set. Many small and military planes just don't have a photo.
