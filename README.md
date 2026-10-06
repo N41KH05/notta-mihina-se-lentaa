@@ -4,7 +4,7 @@ A desk display that shows the planes flying around you. It runs on a Waveshare E
 
 The name is Finnish, roughly "so, where's that one flying to?". The screen is in English by default and can be switched to Finnish.
 
-You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html?v=18) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
+You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html?v=19) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
 
 <p align="center"><img src="docs/img/hero.png" width="720" alt="The display with a selected flight from Stockholm to Oulu"></p>
 

@@ -65,6 +65,21 @@ class Canvas : public GFXcanvas16 {
     if (h < 0) { h = -h; y -= h - 1; }            // as the library treats negative heights
     for (int16_t i = 0; i < h; i++) drawFastHLine(x, y + i, w, color);
   }
+  // Rows outside clipTop..clipBottom-1 are left alone (for the scrolling list).
+  static int16_t clipTop, clipBottom;
+  void drawPixel(int16_t x, int16_t y, uint16_t c) override {
+    if (y >= clipTop && y < clipBottom) GFXcanvas16::drawPixel(x, y, c);
+  }
+  void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t c) override {
+    if (y >= clipTop && y < clipBottom) GFXcanvas16::drawFastHLine(x, y, w, c);
+  }
+  void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t c) override {
+    if (h < 0) { h = -h; y -= h - 1; }
+    int16_t y1 = y + h;
+    if (y < clipTop) y = clipTop;
+    if (y1 > clipBottom) y1 = clipBottom;
+    if (y1 > y) GFXcanvas16::drawFastVLine(x, y, y1 - y, c);
+  }
 };
 
 // ============================================================================

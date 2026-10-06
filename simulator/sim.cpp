@@ -85,6 +85,7 @@ static void onEvent(const Ev& e) {
   }
   switch (e.type) {
     case EV_DRAG: appPan(s, e.dx, e.dy); break;
+    case EV_SCROLL: if (!s.selHex[0]) appScroll(s, e.dy); break;
     case EV_ZOOM: appZoom(s, e.dx); break;
     case EV_TAP:
       switch (appTap(s, e.x, e.y, nowMs, nullptr)) {

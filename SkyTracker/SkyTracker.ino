@@ -652,6 +652,7 @@ void loop() {
         dragging = true;
         break;
       case EV_DRAG_END: baseStale = true; break;
+      case EV_SCROLL: if (!state.selHex[0]) appScroll(state, e.dy); break;
       case EV_ZOOM: appZoom(state, e.dx); break;
       case EV_TAP:
         switch (appTap(state, e.x, e.y, millis(), requestRouteLocked)) {

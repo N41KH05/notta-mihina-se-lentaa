@@ -43,6 +43,7 @@ Once it's connected it asks **Where is home?** Home is the centre of the map and
 ## Using it
 
 - Drag to move the map, pinch or use + and − to zoom. The house button goes back to home.
+- The list on the right shows the planes in view, nearest first. Drag it up and down to scroll through them.
 - Tap a plane, on the map or in the list, to see its details. **FOLLOW** keeps it centred; **CLOSE** or a tap on empty map goes back to the list.
 - The line under the flight number names the airline. For planes without one, such as private planes and flying clubs, it shows the aircraft's registered owner instead. When an airliner belongs to someone other than the airline flying it (usually a leasing company), the owner is shown under the registration. Both come from adsbdb.
 - The selected plane's path since take-off is drawn on the map, coloured by altitude, and keeps growing as it flies. It comes from adsb.lol's track history. If that isn't available, a dashed line from the departure airport is shown instead.

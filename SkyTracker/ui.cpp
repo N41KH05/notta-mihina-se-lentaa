@@ -702,7 +702,7 @@ void Gestures::update(const TouchPt* p, int n, uint32_t now, void (*emit)(const 
       pinching = true;
       pinchStart = d;
       if (dragging) emit(Ev{EV_DRAG_END, 0, 0, 0, 0});
-      dragging = false;
+      dragging = scrolling = false;
     } else if (pinchStart > 20 && (d > pinchStart * 1.45f || d < pinchStart / 1.45f)) {
       emit(Ev{EV_ZOOM, 0, 0, (int16_t)(d > pinchStart ? 1 : -1), 0});
       pinchStart = d;
@@ -710,19 +710,21 @@ void Gestures::update(const TouchPt* p, int n, uint32_t now, void (*emit)(const 
     down = true;
   } else if (n == 1) {
     if (!down) {
-      down = true; dragging = false; pinching = false;
+      down = true; dragging = scrolling = pinching = false;
       sx = lx = p[0].x; sy = ly = p[0].y;
       t0 = now;
     } else if (!pinching) {
-      if (!dragging && (abs(p[0].x - sx) > 10 || abs(p[0].y - sy) > 10) && sx < MAP_W) dragging = true;
+      bool moved = abs(p[0].x - sx) > 10 || abs(p[0].y - sy) > 10;
+      if (!dragging && !scrolling && moved) (sx < MAP_W ? dragging : scrolling) = true;
       if (dragging && (p[0].x != lx || p[0].y != ly))
         emit(Ev{EV_DRAG, p[0].x, p[0].y, (int16_t)(p[0].x - lx), (int16_t)(p[0].y - ly)});
+      if (scrolling && p[0].y != ly) emit(Ev{EV_SCROLL, p[0].x, p[0].y, 0, (int16_t)(p[0].y - ly)});
     }
     lx = p[0].x; ly = p[0].y;
   } else if (down) {                                   // finger lifted
     if (dragging) emit(Ev{EV_DRAG_END, 0, 0, 0, 0});
-    else if (!pinching && now - t0 < 600) emit(Ev{EV_TAP, sx, sy, 0, 0});
-    down = dragging = pinching = false;
+    else if (!scrolling && !pinching && now - t0 < 600) emit(Ev{EV_TAP, sx, sy, 0, 0});
+    down = dragging = scrolling = pinching = false;
   }
 }
 
@@ -751,6 +753,11 @@ void appEndPickHome(AppState& s, bool save) {
   }
   s.pickHome = false;
   appGoHome(s);
+}
+
+void appScroll(AppState& s, int dy) {
+  s.listScroll -= dy;                       // the list is clamped to its length when drawn
+  if (s.listScroll < 0) s.listScroll = 0;
 }
 
 void appPan(AppState& s, int dx, int dy) {

@@ -696,9 +696,13 @@ void renderBase(Adafruit_GFX& g, float cx, float cy, int zoom) {
 //  Overlay: planes, buttons, panel (every frame)
 // ---------------------------------------------------------------------------
 static int viewIdx[MAX_PLANES];
-static char rowHex[13][8];
+// The plane list in the side panel scrolls; these are the rows shown in the last frame.
+static const int LIST_TOP = 78, LIST_BOTTOM = H - 48, ROW_H = 26, MAX_ROWS = 16;
+static char rowHex[MAX_ROWS][8];
+static int16_t rowTop[MAX_ROWS];
 static int nRows = 0;
 const char* listRowHex(int row) { return row >= 0 && row < nRows ? rowHex[row] : nullptr; }
+int16_t Canvas::clipTop = -32768, Canvas::clipBottom = 32767;
 
 // On-screen buttons over the map (bottom right).
 static const int BTN = 46, BTN_X = MAP_W - BTN - 10;
@@ -852,10 +856,9 @@ UiHit uiHitTest(int x, int y, const AppState& s, int* row) {
     if (y >= PB_Y && y < PB_Y + PB_H) return x < PANEL_X + (W - PANEL_X) / 2 ? HIT_FOLLOW : HIT_CLOSE;
     return HIT_PANEL;
   }
-  if (y >= 80 && y < 80 + 26 * 13) {
-    int r = (y - 80) / 26;
-    if (r < nRows) { if (row) *row = r; return HIT_LIST_ROW; }
-  }
+  if (y >= LIST_TOP && y < LIST_BOTTOM)
+    for (int r = 0; r < nRows; r++)
+      if (y >= rowTop[r] && y < rowTop[r] + ROW_H && x < W - 16) { if (row) *row = r; return HIT_LIST_ROW; }
   return HIT_PANEL;
 }
 
@@ -1131,22 +1134,40 @@ static void panelList(Adafruit_GFX& g, AppState& s, int n) {
     text(g, x0, 122, TR("Loitonna nähdäksesi laajemmalle.", "Zoom out to see a wider area."), R13, C_TEXT2);
     return;
   }
-  int y = 82;
-  for (int k = 0; k < n && k < 13; k++) {
+  // Rows, scrolled by s.listScroll and cut off at the edges of the list area.
+  const int viewH = LIST_BOTTOM - LIST_TOP, contentH = n * ROW_H + 8;
+  int maxScroll = contentH > viewH ? contentH - viewH : 0;
+  if (s.listScroll > maxScroll) s.listScroll = maxScroll;
+  if (s.listScroll < 0) s.listScroll = 0;
+  const int scroll = s.listScroll;
+  bool scrollable = maxScroll > 0;
+  if (scrollable) x1 -= 8;                         // room for the scrollbar
+  Canvas::clipTop = LIST_TOP;
+  Canvas::clipBottom = LIST_BOTTOM;
+  for (int k = scroll / ROW_H; k < n; k++) {
+    int y = LIST_TOP + 4 + k * ROW_H - scroll;
+    if (y - 4 >= LIST_BOTTOM) break;
     const Plane& p = s.planes[viewIdx[k]];
-    if (k % 2) g.fillRect(PANEL_X + 8, y - 4, W - PANEL_X - 16, 26, theme->stripe);
+    if (k % 2) g.fillRect(PANEL_X + 8, y - 4, x1 + 8 - (PANEL_X + 8), ROW_H, theme->stripe);
     g.fillCircle(x0 + 4, y + 9, 5, altColor(p));
     text(g, x0 + 16, y, p.label(), B15, C_TEXT);
     fmtAlt(t, sizeof t, p, true);
     text(g, x0 + 122, y + 1, t, R13, C_TEXT2);
     fmtDist(t, sizeof t, haversineKm(cfg.homeLat, cfg.homeLon, p.lat, p.lon));
     textR(g, x1, y + 1, t, R13, C_TEXT2);
-    snprintf(rowHex[nRows++], 8, "%s", p.hex);
-    y += 26;
+    if (nRows < MAX_ROWS) {
+      rowTop[nRows] = y - 4;
+      snprintf(rowHex[nRows++], 8, "%s", p.hex);
+    }
   }
-  if (n > 13) {
-    snprintf(t, sizeof t, TR("+ %d lisää", "+ %d more"), n - 13);
-    text(g, x0, y, t, R12, C_TEXT2);
+  Canvas::clipTop = -32768;
+  Canvas::clipBottom = 32767;
+  if (scrollable) {                                 // scrollbar: where we are in the list
+    int bx = W - 14, th = viewH * viewH / contentH;
+    if (th < 24) th = 24;
+    int ty = LIST_TOP + (viewH - th) * scroll / maxScroll;
+    g.fillRoundRect(bx, LIST_TOP + 2, 4, viewH - 4, 2, C_LINE);
+    g.fillRoundRect(bx, ty + 2, 4, th - 4, 2, C_TEXT2);
   }
 }
 

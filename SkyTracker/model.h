@@ -130,6 +130,7 @@ struct AppState {
   char selHex[8];         // "" = nothing selected
   bool follow;
   Route routes[ROUTE_CACHE];
+  int listScroll;          // how far the side panel's plane list is scrolled, in pixels
   // status
   uint32_t updatedEpoch;
   bool apiOk;

@@ -44,7 +44,7 @@ bool uiBusy();                                        // typing or connecting (d
 // so both behave exactly the same.
 struct TouchPt { int16_t x, y; };
 
-enum EvType : uint8_t { EV_TAP, EV_DRAG, EV_DRAG_END, EV_ZOOM };
+enum EvType : uint8_t { EV_TAP, EV_DRAG, EV_DRAG_END, EV_ZOOM, EV_SCROLL };   // scroll: dy on the side panel
 struct Ev { EvType type; int16_t x, y, dx, dy; };
 
 // Turns raw touch points (polled ~60 times a second) into taps, drags and pinches.
@@ -53,7 +53,7 @@ class Gestures {
   // emit is called for each recognised gesture event.
   void update(const TouchPt* p, int n, uint32_t nowMs, void (*emit)(const Ev&));
  private:
-  bool down = false, dragging = false, pinching = false;
+  bool down = false, dragging = false, scrolling = false, pinching = false;
   int16_t sx = 0, sy = 0, lx = 0, ly = 0;
   uint32_t t0 = 0;
   float pinchStart = 0;
@@ -62,6 +62,7 @@ class Gestures {
 // Actions. Call these with the state locked.
 void appGoHome(AppState& s);
 void appPan(AppState& s, int dxPx, int dyPx);          // map follows a finger moving by dx, dy
+void appScroll(AppState& s, int dyPx);                  // the side panel's plane list follows a finger
 void appZoom(AppState& s, int delta);
 // Setting home: show the map at a found place with a cross in the middle.
 void appStartPickHome(AppState& s, const Place& p);
