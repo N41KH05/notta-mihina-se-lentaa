@@ -111,7 +111,10 @@ bool boardInit() {
   cfg.data_width = 16;
   cfg.bits_per_pixel = 16;
   cfg.num_fbs = 2;
-  cfg.bounce_buffer_size_px = W * 20;     // more slack while the CPU is busy with PSRAM
+  // The LCD is fed from these internal-RAM buffers, refilled from PSRAM by an interrupt.
+  // Bigger buffers give that interrupt more time; it is slower in some builds than in
+  // others (its code runs from flash through the cache), so there is room to spare.
+  cfg.bounce_buffer_size_px = W * 30;     // 2 x 48 KB; must divide the frame (480 lines)
   cfg.dma_burst_size = 64;
   cfg.hsync_gpio_num = 46;
   cfg.vsync_gpio_num = 3;
