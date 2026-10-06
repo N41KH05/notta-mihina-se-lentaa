@@ -1409,6 +1409,31 @@ void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm
        : TR("Napauta konetta \x83 vedä \x83 nipistä", "Tap an aircraft \x83 drag \x83 pinch"), R11, C_TEXT2);
 }
 
+void renderUpdatePopup(Adafruit_GFX& g, int pct, int build) {
+  const int cw = 460, ch = 210, cx = (W - cw) / 2, cy = (H - ch) / 2;
+  g.fillRoundRect(cx + 3, cy + 5, cw, ch, 14, C_SHADOW);
+  g.fillRoundRect(cx, cy, cw, ch, 14, C_SURFACE);
+  g.drawRoundRect(cx, cy, cw, ch, 14, C_BTN_EDGE);
+  int x0 = cx + 30, x1 = cx + cw - 30;
+  text(g, x0, cy + 26, TR("Päivitys käynnissä", "Update in progress"), B22, C_TEXT);
+  char t[64];
+  if (pct >= 100) snprintf(t, sizeof t, "%s", TR("Tarkistetaan ja otetaan käyttöön\x84", "Checking and switching over\x84"));
+  else if (pct < 0) snprintf(t, sizeof t, "%s", TR("Yhdistetään\x84", "Connecting\x84"));
+  else snprintf(t, sizeof t, TR("Ladataan build %d\x84", "Downloading build %d\x84"), build);
+  text(g, x0, cy + 64, t, R14, C_TEXT2);
+  // the bar
+  int by = cy + 100, bh = 18, bw = x1 - x0;
+  int p = pct < 0 ? 0 : pct > 100 ? 100 : pct;
+  g.fillRoundRect(x0, by, bw, bh, bh / 2, C_LINE);
+  int fw = bw * p / 100;
+  if (fw >= bh) g.fillRoundRect(x0, by, fw, bh, bh / 2, C_PRIMARY);
+  else if (fw > 0) g.fillCircle(x0 + bh / 2, by + bh / 2, bh / 2 - 1, C_PRIMARY);
+  snprintf(t, sizeof t, "%d %%", p);
+  textR(g, x1, by + bh + 10, t, B16, C_TEXT);
+  text(g, x0, cy + ch - 40, TR("Älä irrota virtaa. Laite käynnistyy uudelleen,", "Keep it plugged in. The device restarts"), R13, C_TEXT2);
+  text(g, x0, cy + ch - 22, TR("kun päivitys on valmis.", "when the update is done."), R13, C_TEXT2);
+}
+
 void renderMessage(Adafruit_GFX& g, const char* big, const char* small) {
   g.fillScreen(C_BAR);
   g.setTextWrap(false);

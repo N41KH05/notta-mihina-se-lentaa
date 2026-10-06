@@ -141,6 +141,7 @@ bool boardInit() {
 }
 
 uint16_t* boardBackBuffer() { return fb[back]; }
+const uint16_t* boardFrontBuffer() { return fb[back ^ 1]; }
 
 void boardPresent() {
   xSemaphoreTake(frameDone, 0);                        // forget older frames

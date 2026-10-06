@@ -597,7 +597,7 @@ void uiTap(int x, int y, uint32_t now, AppState& s) {
   switch (screen) {
     case S_UPDATE:
       if (fwUpdate.install || fwUpdate.state == UPD_CHECKING) break;
-      if (UPD_INSTALL.hit(x, y)) { fwUpdate.install = true; hooks->wakeNet(); }
+      if (UPD_INSTALL.hit(x, y)) { fwUpdate.install = true; screen = S_NONE; hooks->wakeNet(); }   // progress: a popup over the map
       else if (UPD_LATER.hit(x, y)) { fwUpdate.remindAt = now + UPDATE_REMIND_HOURS * 3600000UL; screen = S_NONE; }
       else if (UPD_SKIP.hit(x, y)) { fwUpdate.skipBuild = fwUpdate.latest; hooks->saveSettings(); screen = S_NONE; }
       break;

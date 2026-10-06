@@ -518,7 +518,7 @@ void updateTick() {
     return;
   }
   Serial.printf("Installing build %d (%u bytes)\n", urlBuild, (unsigned)size);
-  fwUpdate.percent = 0;
+  fwUpdate.percent = -1;                        // connecting
   fwUpdate.state = UPD_INSTALLING;
   if (netInstallFirmware(url, size, updateProgress, err, sizeof err)) {
     restartNow("firmware update", !backlightOn);
@@ -681,16 +681,37 @@ void loop() {
   static uint32_t lastFrame = 0;
   webLoop();                                       // the phone settings page
   confirmFirmware();
-  if (fwUpdate.state == UPD_INSTALLING) {          // the fetch task is writing new firmware
-    static uint32_t lastMsg = 0;
-    if (backlightOn && millis() - lastMsg > 500) {
-      lastMsg = millis();
-      char t[48];
-      snprintf(t, sizeof t, TR("%d %% valmiina, älä irrota virtaa", "%d %% done, keep it plugged in"), (int)fwUpdate.percent);
-      message(TR("Päivitetään ohjelmistoa", "Updating the software"), t);
+  // The fetch task is writing new firmware: an "update in progress" popup over the
+  // screen as it was (dimmed). The cached map buffer holds that dimmed copy meanwhile.
+  static bool popupBack = false;
+  if (fwUpdate.state == UPD_INSTALLING || fwUpdate.install) {   // (install: pressed, about to start)
+    static uint32_t lastPopup = 0;
+    static int shownPct = -2;
+    if (backlightOn) {
+      if (!popupBack) {
+        const uint16_t* front = boardFrontBuffer();
+        for (int i = 0; i < SCREEN_W * SCREEN_H; i++) baseBuf[i] = (front[i] >> 1) & 0x7BEF;   // half brightness
+        popupBack = true;
+        shownPct = -2;
+      }
+      int pct = fwUpdate.state == UPD_INSTALLING ? (int)fwUpdate.percent : -1;
+      if (pct != shownPct && millis() - lastPopup > 150) {
+        lastPopup = millis();
+        shownPct = pct;
+        uint16_t* fbuf = boardBackBuffer();
+        memcpy(fbuf, baseBuf, SCREEN_W * SCREEN_H * 2);
+        canvas.use(fbuf);
+        renderUpdatePopup(canvas, pct, fwUpdate.latest);
+        boardPresent();
+      }
     }
     delay(20);
     return;
+  }
+  if (popupBack) {                                 // it failed: back, and say why
+    popupBack = false;
+    baseStale = true;
+    if (fwUpdate.state == UPD_FAILED) uiOpenUpdate();
   }
   wifiWatch();
   // A new version found in the background: ask, once the screen is on and nobody is busy with it.
