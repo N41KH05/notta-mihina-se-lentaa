@@ -208,7 +208,10 @@ void drawSettings(Adafruit_GFX& g, AppState& s) {
   }
 
   // Live data + home
-  card(g, 24, 330, 752, 130, TR("TILA", "STATUS"));
+  char cardLabel[48];
+  if (FW_BUILD > 0) snprintf(cardLabel, sizeof cardLabel, TR("TILA  \x83  OHJELMISTO BUILD %d", "STATUS  \x83  SOFTWARE BUILD %d"), FW_BUILD);
+  else snprintf(cardLabel, sizeof cardLabel, "%s", TR("TILA  \x83  OMA KÄÄNNÖS", "STATUS  \x83  OWN BUILD"));
+  card(g, 24, 330, 752, 130, cardLabel);
   if (s.demo) snprintf(t, sizeof t, "%s", TR("Demotila: keksittyjä koneita kodin lähellä", "Demo mode: made-up aircraft near home"));
   else if (s.apiOk && s.updatedEpoch) snprintf(t, sizeof t, TR("Koneet tulevat palvelusta %s", "Aircraft data from %s"), s.source);
   else if (!s.apiOk) snprintf(t, sizeof t, "%s", TR("Koneiden tietoja ei juuri nyt saada", "Aircraft data is unavailable right now"));
