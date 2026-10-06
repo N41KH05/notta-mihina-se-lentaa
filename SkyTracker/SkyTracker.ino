@@ -473,6 +473,12 @@ void confirmFirmware() {
 }
 
 static void updateProgress(int pct) { fwUpdate.percent = pct; }
+// Just before the new firmware is written to flash: let the popup say so, then switch the
+// screen off (writing flash pauses its feed, which would show as a mess for ~15 s).
+static void beforeFlashWrite() {
+  delay(700);
+  boardBacklight(false);
+}
 
 // Checks every few hours (and when asked); a new version raises fwUpdate.prompt, which
 // opens the update screen. Installing only happens when someone presses "install".
@@ -520,10 +526,11 @@ void updateTick() {
   Serial.printf("Installing build %d (%u bytes)\n", urlBuild, (unsigned)size);
   fwUpdate.percent = -1;                        // connecting
   fwUpdate.state = UPD_INSTALLING;
-  if (netInstallFirmware(url, size, updateProgress, err, sizeof err)) {
+  if (netInstallFirmware(url, size, updateProgress, beforeFlashWrite, err, sizeof err)) {
     restartNow("firmware update", !backlightOn);
     return;
   }
+  if (backlightOn) boardBacklight(true);       // (if it got as far as switching it off)
   snprintf(fwUpdate.error, sizeof fwUpdate.error, "%s", err);
   fwUpdate.state = UPD_FAILED;
   Serial.printf("Update failed: %s\n", err);

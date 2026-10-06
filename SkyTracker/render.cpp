@@ -1417,7 +1417,7 @@ void renderUpdatePopup(Adafruit_GFX& g, int pct, int build) {
   int x0 = cx + 30, x1 = cx + cw - 30;
   text(g, x0, cy + 26, TR("Päivitys käynnissä", "Update in progress"), B22, C_TEXT);
   char t[64];
-  if (pct >= 100) snprintf(t, sizeof t, "%s", TR("Tarkistetaan ja otetaan käyttöön\x84", "Checking and switching over\x84"));
+  if (pct >= 100) snprintf(t, sizeof t, "%s", TR("Asennetaan, näyttö sammuu hetkeksi\x84", "Installing, the screen goes dark for a moment\x84"));
   else if (pct < 0) snprintf(t, sizeof t, "%s", TR("Yhdistetään\x84", "Connecting\x84"));
   else snprintf(t, sizeof t, TR("Ladataan build %d\x84", "Downloading build %d\x84"), build);
   text(g, x0, cy + 64, t, R14, C_TEXT2);

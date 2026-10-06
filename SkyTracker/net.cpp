@@ -749,7 +749,12 @@ int netLatestFirmware(char* url, size_t urlLen, uint32_t* size, char* notes, siz
   return 0;
 }
 
-bool netInstallFirmware(const char* url, uint32_t size, void (*progress)(int pct), char* err, size_t errLen) {
+bool netInstallFirmware(const char* url, uint32_t size, void (*progress)(int pct), void (*beforeWrite)(),
+                        char* err, size_t errLen) {
+  // 1. Download the whole file into PSRAM. Nothing is written to flash yet: writing flash
+  //    pauses the cache the LCD feed depends on, which would scramble the screen throughout.
+  uint8_t* img = (uint8_t*)heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+  if (!img) { snprintf(err, errLen, "%s", TR("muisti ei riitä", "not enough memory")); return false; }
   WiFiClientSecure client;
   client.useBuiltinCACertBundle();
   client.setHandshakeTimeout(15);
@@ -758,46 +763,53 @@ bool netInstallFirmware(const char* url, uint32_t size, void (*progress)(int pct
   http.setTimeout(15000);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);   // GitHub sends the file from another host
   http.setUserAgent("SkyTracker desk display (personal, non-commercial)");
-  if (!http.begin(client, url)) { snprintf(err, errLen, "%s", TR("virheellinen osoite", "invalid address")); return false; }
-  int status = http.GET();
-  if (status != 200) {
+  int done = 0;
+  bool ok = http.begin(client, url);
+  if (!ok) snprintf(err, errLen, "%s", TR("virheellinen osoite", "invalid address"));
+  int status = ok ? http.GET() : -1;
+  if (ok && status != 200) {
     snprintf(err, errLen, "%s %d", TR("lataus epäonnistui, HTTP", "download failed, HTTP"), status);
-    http.end();
-    return false;
+    ok = false;
   }
-  int len = http.getSize();
-  if (len <= 0 || (uint32_t)len != size) {
+  if (ok && (uint32_t)http.getSize() != size) {
     snprintf(err, errLen, "%s", TR("väärän kokoinen tiedosto", "file has the wrong size"));
-    http.end();
-    return false;
+    ok = false;
   }
-  if (!Update.begin(len, U_FLASH)) {
-    snprintf(err, errLen, "%s", Update.errorString());
-    http.end();
-    return false;
-  }
-  static uint8_t buf[4096];
-  WiFiClient* st = http.getStreamPtr();
-  int done = 0, lastPct = -1;
-  uint32_t lastData = millis();
-  while (done < len && millis() - lastData < 20000) {
-    esp_task_wdt_reset();
-    int n = st->readBytes(buf, min((int)sizeof buf, len - done));
-    if (n <= 0) { delay(5); continue; }
-    lastData = millis();
-    if (Update.write(buf, n) != (size_t)n) break;
-    done += n;
-    int pct = (int)((int64_t)done * 100 / len);
-    if (pct != lastPct && progress) progress(lastPct = pct);
+  if (ok) {
+    WiFiClient* st = http.getStreamPtr();
+    int lastPct = -1;
+    uint32_t lastData = millis();
+    while (done < (int)size && millis() - lastData < 20000) {
+      esp_task_wdt_reset();
+      int n = st->readBytes(img + done, min(16384, (int)size - done));
+      if (n <= 0) { delay(5); continue; }
+      lastData = millis();
+      done += n;
+      int pct = (int)((int64_t)done * 99 / size);          // 100 = installing
+      if (pct != lastPct && progress) progress(lastPct = pct);
+    }
+    if (done != (int)size) { snprintf(err, errLen, "%s", TR("lataus katkesi", "download interrupted")); ok = false; }
   }
   http.end();
-  // end() checks the whole image (its SHA-256 included) before switching to it.
-  if (done != len || !Update.end(true)) {
-    snprintf(err, errLen, "%s", done != len ? TR("lataus katkesi", "download interrupted") : Update.errorString());
-    Update.abort();
-    return false;
+  if (!ok) { heap_caps_free(img); return false; }
+
+  // 2. Write it to the other app slot in one go (the screen is switched off meanwhile).
+  //    end() checks the whole image, its SHA-256 included, before switching to it.
+  if (progress) progress(100);
+  if (beforeWrite) beforeWrite();
+  ok = Update.begin(size, U_FLASH);
+  for (uint32_t pos = 0; ok && pos < size; pos += 65536) {
+    esp_task_wdt_reset();
+    uint32_t n = min((uint32_t)65536, size - pos);
+    ok = Update.write(img + pos, n) == n;
   }
-  return true;
+  ok = ok && Update.end(true);
+  if (!ok) {
+    snprintf(err, errLen, "%s", Update.errorString());
+    Update.abort();
+  }
+  heap_caps_free(img);
+  return ok;
 }
 
 void netFetchPhoto(void* lock) {

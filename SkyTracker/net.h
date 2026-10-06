@@ -12,7 +12,9 @@ void netLookupRoute(AppState& s, void* lock);
 int netLatestFirmware(char* url, size_t urlLen, uint32_t* size, char* notes, size_t notesLen,
                       char* err, size_t errLen);
 // Downloads it into the other app slot; true when it's ready to start (then restart).
-bool netInstallFirmware(const char* url, uint32_t size, void (*progress)(int pct), char* err, size_t errLen);
+// Downloads into PSRAM first, then calls beforeWrite() and writes it to flash in one go.
+bool netInstallFirmware(const char* url, uint32_t size, void (*progress)(int pct), void (*beforeWrite)(),
+                        char* err, size_t errLen);
 // Fetch the photo for the selected plane, if one was requested. Takes the lock itself.
 void netFetchPhoto(void* lock);
 // Fetch the selected plane's flight path, if one was requested. Takes the lock itself.
