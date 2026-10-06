@@ -2,18 +2,23 @@
   <img src="docs/img/banner.png" alt="Notta mihinä se lentää? A live flight-tracking display" width="100%">
 </p>
 
+<br>
+
 <p align="center">
-  <a href="https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html"><img src="https://img.shields.io/badge/TRY_IT-IN_THE_BROWSER-ffb239?style=for-the-badge&labelColor=0b1016" alt="Try it in the browser"></a>
-  <a href="https://n41kh05.github.io/notta-mihina-se-lentaa/"><img src="https://img.shields.io/badge/PROJECT-PAGE-6ae28b?style=for-the-badge&labelColor=0b1016" alt="Project page"></a>
-  <a href="https://github.com/N41KH05/notta-mihina-se-lentaa/releases/latest"><img src="https://img.shields.io/github/v/release/N41KH05/notta-mihina-se-lentaa?style=for-the-badge&label=FIRMWARE&labelColor=0b1016&color=83aed5" alt="Latest firmware"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT-9aa8a4?style=for-the-badge&labelColor=0b1016" alt="MIT licence"></a>
+  <a href="https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html"><img src="https://img.shields.io/badge/Try_it_in_the_browser-ffb239?style=for-the-badge" alt="Try it in the browser"></a>&nbsp;
+  <a href="https://n41kh05.github.io/notta-mihina-se-lentaa/"><img src="https://img.shields.io/badge/Project_page-6ae28b?style=for-the-badge" alt="Project page"></a>&nbsp;
+  <a href="https://github.com/N41KH05/notta-mihina-se-lentaa/releases/latest"><img src="https://img.shields.io/github/v/release/N41KH05/notta-mihina-se-lentaa?style=for-the-badge&label=&color=83aed5" alt="Latest firmware"></a>
 </p>
+
+<br>
 
 A desk display that shows the planes flying around you. It runs on a Waveshare ESP32-S3-Touch-LCD-7, which is a 7" touchscreen with an ESP32-S3 on the back, so there's nothing to wire up. Drag and zoom the map, tap a plane, and you get its route, altitude, speed, type and usually a photo of that exact aircraft.
 
 The name is Finnish, roughly "so, where's that one flying to?". The screen is in English by default and can be switched to Finnish.
 
 You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
+
+<br>
 
 <table>
   <tr>
@@ -25,6 +30,8 @@ You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa
     <td width="50%"><img src="docs/img/home_pick.png" alt="Setting home with a crosshair on the map"><br><sub><b>SET HOME</b> · search an address, then fine-tune on the map</sub></td>
   </tr>
 </table>
+
+<br>
 
 ## What it does
 
