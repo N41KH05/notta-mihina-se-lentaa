@@ -778,7 +778,12 @@ void loop() {
   xSemaphoreTake(lock, portMAX_DELAY);
   bool away = state.zoom != START_ZOOM || state.selHex[0] ||
               fabsf(state.cx - mercX(cfg.homeLon)) > 1 || fabsf(state.cy - mercY(cfg.homeLat)) > 1;
-  if (away && idleLong && !state.follow && !state.pickHome) { appGoHome(state); xTaskNotifyGive(fetchTask); }
+  // Back to the home view after a while untouched, but not while a plane is selected:
+  // its details and path stay until it's closed or the plane leaves the data.
+  if (away && idleLong && !state.follow && !state.pickHome && !state.selHex[0]) {
+    appGoHome(state);
+    xTaskNotifyGive(fetchTask);
+  }
   Plane* sel = state.selected();
   if (sel && !state.route(sel->cs)) requestRouteLocked(*sel);   // retry failed lookups
   // Departure/arrival times for the selected flight: once, then refreshed now and then.
@@ -801,8 +806,15 @@ void loop() {
   if (sel && strcmp(flightPath.hex, sel->hex)) {
     snprintf(flightPath.hex, sizeof flightPath.hex, "%s", sel->hex);
     flightPath.clear();
+    flightPath.tries = 0;
     if (state.demo) demoPath(state, *sel, flightPath);
     else { flightPath.state = PATH_LOADING; xTaskNotifyGive(fetchTask); }
+  }
+  // Nothing found yet (e.g. a plane that only just took off): look again a few times.
+  if (sel && !state.demo && flightPath.state == PATH_MISSING && flightPath.tries < 4 &&
+      millis() - flightPath.triedMs > 90000) {
+    flightPath.state = PATH_LOADING;
+    xTaskNotifyGive(fetchTask);
   }
   if (!sel && flightPath.hex[0]) { flightPath.hex[0] = 0; flightPath.state = PATH_NONE; }
   if (state.follow && sel) {

@@ -49,7 +49,7 @@ Once it's connected it asks **Where is home?** Home is the centre of the map and
 - The selected plane's path since take-off is drawn on the map, coloured by altitude, and keeps growing as it flies. It comes from adsb.lol's track history. If that isn't available, a dashed line from the departure airport is shown instead.
 - The gear in the bottom left opens Settings: Wi-Fi, units, language, dark mode, home, demo mode and the data status.
 - Colours show altitude: red and orange are low, green is in between, blue and purple are at cruising height. The icon shows the kind of aircraft (airliner, wide-body, business jet, propeller plane, light aircraft, helicopter, glider), worked out from its type code or, failing that, the size class its transponder sends. Bigger aircraft get bigger icons.
-- After 5 minutes without a touch it goes back to the home view.
+- After 5 minutes without a touch it goes back to the home view, unless a plane is selected: its details and path stay until you close them or the plane leaves the data.
 - Dark mode swaps the colours for amber and green on black. In Settings, **Off** keeps the light colours, **On** keeps the dark ones, and **Auto** switches at sunset and back at sunrise at your home location (it needs the clock, so it stays light until Wi-Fi has set the time).
 - At night (23–07 unless you change it) the screen turns off, since the backlight can't be dimmed. A tap wakes it.
 - The position services return planes within 250 nm of a point. Zoom out further and you'll see a dotted circle marking that limit.

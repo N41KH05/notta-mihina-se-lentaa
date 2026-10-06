@@ -147,6 +147,18 @@ void trafficMerge(AppState& s, Plane*& incoming, int n) {
     }
     p.addTrail(p.fx, p.fy);
   }
+  // The selected plane missing from this report (the view moved away from it, it fell
+  // out of the nearest 400, or one report simply missed it): keep it, still gliding
+  // along its last track, for up to 90 s rather than dropping the selection and its path.
+  if (s.selHex[0]) {
+    bool found = false;
+    for (int i = 0; i < n && !found; i++) found = !strcmp(incoming[i].hex, s.selHex);
+    Plane* old = found ? nullptr : findOld(s.selHex);
+    if (old && (int32_t)(millis() - old->tMs) < 90000) {
+      int slot = n < MAX_PLANES ? n++ : n - 1;
+      incoming[slot] = *old;
+    }
+  }
   Plane* t = s.planes;
   s.planes = incoming;
   incoming = t;
@@ -215,32 +227,45 @@ bool routeParse(JsonDocument& doc, Route& r) {
   return true;
 }
 
-// Track history in tar1090's trace format (adsb.lol /data/traces/xx/trace_full_<hex>.json):
-// "trace": [[seconds, lat, lon, altitude or "ground", speed, track, flags, ...], ...].
-// Keeps the current flight only: from the last point on the ground, the last "new leg"
-// flag, or the last gap of over 30 minutes. Returns how many points went into out.
+// Track history in tar1090's trace format, from adsb.lol: /data/traces/xx/trace_full_<hex>.json
+// and trace_recent_<hex>.json, both {"timestamp": <unix seconds>, "trace": [[seconds after
+// timestamp, lat, lon, altitude or "ground", speed, track, flags, ...], ...]}. The full file
+// is only rewritten every few minutes; the recent one has the latest stretch.
 void traceFilter(JsonDocument& filter) {
+  filter["timestamp"] = true;
   filter["trace"][0][0] = true;
 }
-int traceToPath(JsonDocument& doc, FlightPath& out) {
-  JsonArray tr = doc["trace"];
-  int n = tr.size(), start = 0;
-  float prevT = -1;
+// Appends the points of one trace file that are later than *lastT (so the recent file only
+// adds what the full one doesn't have yet). Returns the new number of points.
+int traceCollect(JsonDocument& doc, TracePt* pts, int n, int max, double* lastT) {
+  double base = doc["timestamp"] | 0.0;
+  for (JsonArray p : doc["trace"].as<JsonArray>()) {
+    if (n >= max) break;
+    double t = base + (p[0] | 0.0);
+    if (t <= *lastT) continue;
+    if (!p[1].is<float>() || !p[2].is<float>()) continue;
+    TracePt& q = pts[n++];
+    q.t = t;
+    q.lat = p[1].as<float>();
+    q.lon = p[2].as<float>();
+    q.ground = p[3].is<const char*>();
+    q.alt = p[3].is<int>() ? p[3].as<int>() : 0;
+    q.flags = p[6] | 0;
+    *lastT = t;
+  }
+  return n;
+}
+// Keeps the current flight only: from the last point on the ground, the last "new leg"
+// flag, or the last gap of over 30 minutes. Returns how many points went into out.
+int traceToPath(const TracePt* pts, int n, FlightPath& out) {
+  int start = 0;
   for (int i = 0; i < n; i++) {
-    JsonArray p = tr[i];
-    float t = p[0] | 0.0f;
-    if ((p[6] | 0) & 2) start = i;                     // flag: a new leg starts here
-    if (prevT >= 0 && t - prevT > 1800) start = i;     // long gap: a later flight
-    if (p[3].is<const char*>()) start = i;             // "ground": not airborne yet
-    prevT = t;
+    if (pts[i].flags & 2) start = i;                                  // a new leg starts here
+    if (i && pts[i].t - pts[i - 1].t > 1800) start = i;               // long gap: a later flight
+    if (pts[i].ground) start = i;                                     // not airborne yet
   }
   out.clear();
-  for (int i = start; i < n; i++) {
-    JsonArray p = tr[i];
-    if (!p[1].is<float>() || !p[2].is<float>()) continue;
-    int alt = p[3].is<int>() ? p[3].as<int>() : 0;
-    out.add(mercX(p[2].as<double>()), mercY(p[1].as<double>()), alt);
-  }
+  for (int i = start; i < n; i++) out.add(mercX(pts[i].lon), mercY(pts[i].lat), pts[i].alt);
   return out.n;
 }
 
@@ -858,29 +883,36 @@ void netFetchPath(void* lock) {
   for (char* c = hex; *c; c++) *c = tolower((uint8_t)*c);
 
   static FlightPath* tmp = (FlightPath*)heap_caps_malloc(sizeof(FlightPath), MALLOC_CAP_SPIRAM);
-  char url[96];
-  snprintf(url, sizeof url, "https://adsb.lol/data/traces/%s/trace_full_%s.json", hex + strlen(hex) - 2, hex);
-  uint8_t* raw = nullptr;
-  size_t len = download(url, &raw, 1500000, true);
-  int n = 0;
-  if (len && tmp) {
-    uint8_t* json = raw;
-    size_t jlen = len;
-    uint8_t* plain = nullptr;
-    if (raw[0] == 0x1f && raw[1] == 0x8b) {        // gzip'ed: unpack it first
-      jlen = gunzip(raw, len, &plain, 4000000);
-      json = plain;
+  static TracePt* pts = (TracePt*)heap_caps_malloc(sizeof(TracePt) * MAX_TRACE, MALLOC_CAP_SPIRAM);
+  int np = 0, n = 0;
+  double lastT = 0;
+  for (const char* kind : {"full", "recent"}) {       // the whole day, then the last stretch
+    if (!tmp || !pts) break;
+    char url[96];
+    snprintf(url, sizeof url, "https://adsb.lol/data/traces/%s/trace_%s_%s.json", hex + strlen(hex) - 2, kind, hex);
+    uint8_t* raw = nullptr;
+    size_t len = download(url, &raw, 1500000, true);
+    if (len) {
+      uint8_t* json = raw;
+      size_t jlen = len;
+      uint8_t* plain = nullptr;
+      if (raw[0] == 0x1f && raw[1] == 0x8b) {        // gzip'ed: unpack it first
+        jlen = gunzip(raw, len, &plain, 4000000);
+        json = plain;
+      }
+      if (json && jlen) {
+        JsonDocument filter;
+        traceFilter(filter);
+        JsonDocument doc(&psram);
+        if (!deserializeJson(doc, (const char*)json, jlen, DeserializationOption::Filter(filter)))
+          np = traceCollect(doc, pts, np, MAX_TRACE, &lastT);
+      }
+      heap_caps_free(plain);
     }
-    if (json && jlen) {
-      JsonDocument filter;
-      traceFilter(filter);
-      JsonDocument doc(&psram);
-      if (!deserializeJson(doc, (const char*)json, jlen, DeserializationOption::Filter(filter)))
-        n = traceToPath(doc, *tmp);
-    }
-    heap_caps_free(plain);
+    heap_caps_free(raw);
+    esp_task_wdt_reset();
   }
-  heap_caps_free(raw);
+  if (np && tmp) n = traceToPath(pts, np, *tmp);
 
   LOCK(lock);
   if (!strcasecmp(flightPath.hex, hex) && flightPath.state == PATH_LOADING) {
@@ -891,7 +923,9 @@ void netFetchPath(void* lock) {
     } else {
       flightPath.state = PATH_MISSING;
     }
+    flightPath.triedMs = millis();
+    flightPath.tries++;
   }
   UNLOCK(lock);
-  Serial.printf("Flight path for %s: %d points\n", hex, n);
+  Serial.printf("Flight path for %s: %d points (%d in the traces)\n", hex, n, np);
 }

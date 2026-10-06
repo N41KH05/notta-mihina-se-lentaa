@@ -267,6 +267,8 @@ struct PathPoint { float x, y; int16_t alt100; };      // mercator metres; altit
 struct FlightPath {
   char hex[8];               // which plane this is for
   PathState state;
+  uint32_t triedMs;          // when it was last looked up (retried if nothing was found)
+  uint8_t tries;
   int n;
   PathPoint pts[PATH_POINTS];
 
@@ -284,6 +286,9 @@ struct FlightPath {
   }
 };
 inline FlightPath flightPath;
+// One point of a track history while it is being read (net.cpp).
+struct TracePt { double t; float lat, lon; int32_t alt; uint8_t flags; bool ground; };
+static const int MAX_TRACE = 20000;
 
 // After new positions arrive: extend the selected plane's path to where it was reported.
 // Call with the state locked.
