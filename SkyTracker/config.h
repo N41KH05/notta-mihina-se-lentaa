@@ -95,7 +95,7 @@
 // build; a build from the Arduino IDE is 0.
 #define UPDATE_REPO        "N41KH05/notta-mihina-se-lentaa"   // owner/repository on GitHub
 #define UPDATE_CHECK_HOURS 3
-#define UPDATE_REMIND_HOURS 24        // "Later" asks again after this long
+#define UPDATE_REMIND_HOURS 24        // "Later" asks again after this long (a day)
 #ifndef FW_BUILD
 #define FW_BUILD           0
 #endif
