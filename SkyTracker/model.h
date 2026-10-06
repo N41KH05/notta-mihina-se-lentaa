@@ -22,20 +22,24 @@ struct Config {
   int8_t nightStart = NIGHT_START_HOUR, nightEnd = NIGHT_END_HOUR;   // equal = never off
   uint8_t darkMode = DEFAULT_DARK_MODE;      // DARK_OFF, DARK_ON or DARK_AUTO
   bool photos = SHOW_PHOTOS;
-  bool autoUpdate = AUTO_UPDATE;             // install new firmware builds by itself
   char contact[64] = PHOTO_CONTACT;          // for Planespotters (see config.h)
   char airlabsKey[80] = AIRLABS_KEY;         // "" = no timetable times
 };
 inline Config cfg;
 
-// Firmware updates (net.cpp downloads, SkyTracker.ino decides when).
+// Firmware updates (net.cpp downloads, SkyTracker.ino checks and installs in the fetch
+// task, ui.cpp asks the user).
 enum UpdateState : uint8_t { UPD_NONE, UPD_CHECKING, UPD_CURRENT, UPD_AVAILABLE, UPD_INSTALLING, UPD_FAILED };
 struct FirmwareUpdate {
   volatile uint8_t state = UPD_NONE;
-  volatile bool requested = false;   // "update now" on the phone page
+  volatile bool check = false;       // "check for updates" was pressed
+  volatile bool install = false;     // "install now" was pressed
+  volatile bool prompt = false;      // a new version was found: show the update screen
   int latest = 0;                    // newest build on GitHub (0 = not known yet)
+  char notes[80] = "";               // what changed in it (first line of the release notes)
   volatile int percent = 0;          // while installing
-  uint32_t checkedEpoch = 0;
+  int skipBuild = 0;                 // "skip this version" (saved)
+  uint32_t remindAt = 0;             // "later": not before this millis()
   char error[64] = "";
 };
 inline FirmwareUpdate fwUpdate;

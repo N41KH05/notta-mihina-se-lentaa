@@ -89,13 +89,13 @@
 
 // ---- Firmware updates ---------------------------------------------------------------
 // GitHub Actions builds the firmware on every push and publishes it as a release (see
-// .github/workflows/firmware.yml). The device checks every few hours and installs a
-// newer build when nobody has touched it for a while; if the new build doesn't start
-// properly, the board goes back to the old one by itself. That build sets FW_BUILD; a
-// build from the Arduino IDE is 0 and only updates when asked on the phone page.
+// .github/workflows/firmware.yml). The device checks every few hours and, like a phone,
+// asks before installing: install now, later, or skip that version. If a new build doesn't
+// start properly, the board goes back to the old one by itself. FW_BUILD is set by that
+// build; a build from the Arduino IDE is 0.
 #define UPDATE_REPO        "N41KH05/notta-mihina-se-lentaa"   // owner/repository on GitHub
 #define UPDATE_CHECK_HOURS 3
-#define AUTO_UPDATE        1          // starting value; can be turned off on the phone page
+#define UPDATE_REMIND_HOURS 24        // "Later" asks again after this long
 #ifndef FW_BUILD
 #define FW_BUILD           0
 #endif

@@ -1,5 +1,5 @@
 // The firmware build (simulator/build.py writes it next to this file).
-const WASM_URL = "sim.wasm?v=19";
+const WASM_URL = "sim.wasm?v=20";
 
 (async function () {
   const statusEl = document.getElementById("status");

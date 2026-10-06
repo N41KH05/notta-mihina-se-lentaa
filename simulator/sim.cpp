@@ -75,8 +75,12 @@ static int fPlaceResults(Place* out, int max) {
 static void fPlaceChosen(const Place& p) { appStartPickHome(s, p); }
 static bool fNeedHome() { return !homeAsked; }
 static void fHomeSkipped() { homeAsked = true; }
+// Updates: the simulator is always the newest version.
+static void fWakeNet() {
+  if (fwUpdate.check || fwUpdate.install) { fwUpdate.check = false; fwUpdate.install = false; fwUpdate.state = UPD_CURRENT; }
+}
 static const WifiHooks hooks = {fScan, fResults, fConnect, fStatus, fCurrent, fConnected, fForget, fDemo, fSave,
-                                fPlaceSearch, fPlaceResults, fPlaceChosen, fNeedHome, fHomeSkipped};
+                                fPlaceSearch, fPlaceResults, fPlaceChosen, fNeedHome, fHomeSkipped, fWakeNet};
 
 static void onEvent(const Ev& e) {
   if (uiActive()) {                        // menus only use taps

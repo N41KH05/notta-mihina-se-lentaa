@@ -100,17 +100,22 @@ Anyone on your Wi-Fi can open the page. If that bothers you, set `WEB_PASSWORD` 
 
 ## Firmware updates
 
-The device updates itself. Every time the code on GitHub changes, GitHub Actions builds the firmware and publishes it as a release (`build-123` and so on). The device checks every three hours, and when there's a newer build it installs it once nobody has touched the screen for 10 minutes: the screen shows "Updating the software" with a percentage, and after about a minute it restarts on the new version. At night it does this with the screen off.
+New versions come from GitHub: every time the code changes, GitHub Actions builds the firmware and publishes it as a release (`build-123` and so on).
 
-If a new build doesn't start properly (it crashes, or never gets as far as showing planes), the board goes back to the previous build by itself on the next restart.
+The device checks every three hours, and works like a phone: when there's a new version, it shows **Software update** with what changed and three choices:
 
-The phone settings page shows the version and the update status, has a button to check and install right away, and a checkbox to turn automatic updates off.
+- **Install now**: downloads it (about a minute, with a percentage on screen) and restarts on the new version.
+- **Later**: asks again in a day.
+- **Skip version**: doesn't ask about this version again; a newer one will be offered as usual.
+
+It waits until nobody has touched the screen for 20 seconds before asking, and doesn't ask while the screen is off at night. In **Settings**, the status card has a **Check for updates** button; when a version is waiting it says **Update available** and opens the same screen. The phone settings page shows the same status and can install the newest version too.
+
+If a new version doesn't start properly (it crashes, or never gets as far as showing planes), the board goes back to the previous one by itself on the next restart.
 
 Good to know:
 
-- **Moving to automatic updates takes one USB upload.** Updates need two program slots in flash, and the partition table that has them only gets onto the board over USB. After that one upload, Wi-Fi, home and other settings are kept as before.
-- **A build you upload from the Arduino IDE is never replaced automatically.** It counts as version 0, so you can try your own changes in peace. The "install now" button on the phone page still works, and once a GitHub build is on the board, automatic updates continue from there.
-- **GitHub builds use the `config.h` from the repository.** Settings made on the screen or the phone page are kept, but if you changed `config.h` yourself (for example `WEB_PASSWORD` or `LCD_PCLK_MHZ`), an update replaces those with the repository's values. Make such changes in your own fork, or turn automatic updates off.
+- **Moving to this takes one USB upload.** Updates need two program slots in flash, and the partition table that has them only gets onto the board over USB. Wi-Fi, home and other settings are kept.
+- **GitHub builds use the `config.h` from the repository.** Settings made on the screen or the phone page are kept, but if you changed `config.h` yourself (for example `WEB_PASSWORD` or `LCD_PCLK_MHZ`), installing an update replaces those with the repository's values.
 - **In a fork**, set `UPDATE_REPO` in `config.h` to your own repository and enable Actions there.
 
 ## Units and saved settings

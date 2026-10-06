@@ -91,7 +91,7 @@ const char* signalWord(int rssi) {
 }
 
 // ---- state ---------------------------------------------------------------------------
-enum Screen { S_NONE, S_SETTINGS, S_WIFI, S_KEYS, S_CONNECT, S_PLACES };
+enum Screen { S_NONE, S_SETTINGS, S_WIFI, S_KEYS, S_CONNECT, S_PLACES, S_UPDATE };
 const WifiHooks* hooks = nullptr;
 Screen screen = S_NONE;
 bool firstRun = false;
@@ -122,6 +122,9 @@ int connectResult = 0;          // 0 trying, 1 ok, -1 failed
 
 // ---- screens: settings ----------------------------------------------------------------
 const Rect SET_CHANGE = {44, 156, 230, 44}, SET_FORGET = {290, 156, 210, 44}, SET_DEMO = {516, 156, 240, 44};
+const Rect SET_UPDATE = {456, 386, 200, 40};          // in the status card, left of the QR code
+const Rect UPD_INSTALL = {44, 380, 300, 56}, UPD_LATER = {360, 380, 180, 56}, UPD_SKIP = {556, 380, 200, 56};
+bool checkAsked = false;                              // "check for updates" pressed in Settings
 
 // Units, language and dark mode: a row of switches, each with two or three options.
 const int N_SWITCHES = 5;
@@ -219,11 +222,22 @@ void drawSettings(Adafruit_GFX& g, AppState& s) {
   text(g, 44, 360, t, B18, s.apiOk || s.demo ? C_TEXT : C_BAD);
   if (!s.apiOk && !s.demo && s.apiError[0]) {
     char e[100];
-    fitCopy(e, sizeof e, s.apiError, R14, 560);
+    fitCopy(e, sizeof e, s.apiError, R14, 400);
     text(g, 44, 390, e, R14, C_TEXT2);
   } else {
     snprintf(t, sizeof t, TR("%d konetta seurannassa  \x83  uudet sijainnit %d s välein", "%d aircraft tracked  \x83  new positions every %d s"), s.nPlanes, pollSeconds(s.nPlanes));
     text(g, 44, 390, t, R14, C_TEXT2);
+  }
+  // Software updates: one button that says what it will do.
+  {
+    bool avail = fwUpdate.state == UPD_AVAILABLE, busy = fwUpdate.state == UPD_CHECKING || checkAsked;
+    button(g, SET_UPDATE, busy ? TR("Tarkistetaan\x84", "Checking\x84") : avail ? TR("Päivitys saatavilla", "Update available")
+                                 : TR("Tarkista päivitykset", "Check for updates"), avail, B14);
+    const char* note = nullptr;
+    uint16_t nc = C_TEXT2;
+    if (fwUpdate.state == UPD_CURRENT) note = TR("Ohjelmisto on ajan tasalla", "The software is up to date");
+    else if (fwUpdate.state == UPD_FAILED) { note = TR("Tarkistus epäonnistui", "The check failed"); nc = C_BAD; }
+    if (note && !busy) textC(g, SET_UPDATE.x + SET_UPDATE.w / 2, SET_UPDATE.y + SET_UPDATE.h + 8, note, R12, nc);
   }
   // Phone settings page (web.cpp): address and a QR code to open it
   if (cur[0] && ip[0]) {
@@ -531,6 +545,7 @@ bool uiActive() { return screen != S_NONE; }
 bool uiBusy() { return screen == S_KEYS || screen == S_CONNECT || screen == S_PLACES || (screen == S_WIFI && firstRun); }
 void uiClose() { screen = S_NONE; }
 void uiOpenSettings() { screen = S_SETTINGS; }
+void uiOpenUpdate() { screen = S_UPDATE; }
 void uiOpenHome(bool first) {
   homeFirst = first;
   kbFor = KB_PLACE;
@@ -548,6 +563,11 @@ void uiOpenWifi(const char* n, bool first, bool alert) {
 }
 
 void uiTick(uint32_t now) {
+  // "Check for updates" in Settings: show the result, or the update screen if there is one.
+  if (checkAsked && !fwUpdate.check && fwUpdate.state != UPD_CHECKING) {
+    checkAsked = false;
+    if (fwUpdate.state == UPD_AVAILABLE && screen == S_SETTINGS) { fwUpdate.prompt = false; screen = S_UPDATE; }
+  }
   if (screen == S_WIFI && nNets < 0) {
     int n = hooks->scanResults(nets, MAX_NETS);
     if (n >= 0) nNets = n;
@@ -575,6 +595,12 @@ void uiTick(uint32_t now) {
 
 void uiTap(int x, int y, uint32_t now, AppState& s) {
   switch (screen) {
+    case S_UPDATE:
+      if (fwUpdate.install || fwUpdate.state == UPD_CHECKING) break;
+      if (UPD_INSTALL.hit(x, y)) { fwUpdate.install = true; hooks->wakeNet(); }
+      else if (UPD_LATER.hit(x, y)) { fwUpdate.remindAt = now + UPDATE_REMIND_HOURS * 3600000UL; screen = S_NONE; }
+      else if (UPD_SKIP.hit(x, y)) { fwUpdate.skipBuild = fwUpdate.latest; hooks->saveSettings(); screen = S_NONE; }
+      break;
     case S_SETTINGS:
       if (BACK.hit(x, y)) screen = S_NONE;
       else if (SET_HOME.hit(x, y)) uiOpenHome(false);
@@ -585,6 +611,14 @@ void uiTap(int x, int y, uint32_t now, AppState& s) {
         hooks->current(cur, sizeof cur, ip, sizeof ip, &r);
         if (cur[0]) { hooks->forget(); uiOpenWifi(TR("Verkko unohdettiin. Valitse uusi verkko.", "Network forgotten. Choose a new network."), false, false); }
       } else if (SET_DEMO.hit(x, y) && !s.demo) { hooks->useDemo(); screen = S_NONE; }
+      else if (SET_UPDATE.hit(x, y)) {
+        if (fwUpdate.state == UPD_AVAILABLE) screen = S_UPDATE;
+        else if (fwUpdate.state != UPD_CHECKING && !checkAsked) {
+          checkAsked = true;
+          fwUpdate.check = true;
+          hooks->wakeNet();
+        }
+      }
       else {
         for (int i = 0; i < N_SWITCHES; i++)
           for (int opt = 0; opt < switchOptions(i); opt++)
@@ -682,6 +716,38 @@ void uiTap(int x, int y, uint32_t now, AppState& s) {
   }
 }
 
+// ---- screens: software update ---------------------------------------------------------
+void drawUpdate(Adafruit_GFX& g) {
+  header(g, TR("Ohjelmistopäivitys", "Software update"), false);
+  card(g, 24, 76, 752, 288, "");
+  char t[120], line[100];
+  text(g, 44, 100, TR("Uusi versio on saatavilla", "A new version is available"), B26, C_TEXT);
+  if (FW_BUILD > 0) snprintf(t, sizeof t, TR("Build %d  \x83  nyt käytössä build %d", "Build %d  \x83  now running build %d"), fwUpdate.latest, FW_BUILD);
+  else snprintf(t, sizeof t, TR("Build %d  \x83  nyt käytössä oma käännös", "Build %d  \x83  now running your own build"), fwUpdate.latest);
+  text(g, 44, 144, t, R14, C_TEXT2);
+  if (fwUpdate.notes[0]) {
+    text(g, 44, 184, TR("Muutokset:", "What's new:"), R14, C_TEXT2);
+    fitCopy(line, sizeof line, fwUpdate.notes, B18, 700);
+    text(g, 44, 206, line, B18, C_TEXT);
+  }
+  text(g, 44, 258, TR("Asennus kestää noin minuutin, ja laite käynnistyy sen jälkeen uudelleen.",
+                      "Installing takes about a minute, then the device restarts."), R14, C_TEXT2);
+  text(g, 44, 280, TR("Jos uusi versio ei käynnisty kunnolla, laite palaa tähän versioon.",
+                      "If the new version doesn't start properly, the device goes back to this one."), R14, C_TEXT2);
+  if (fwUpdate.state == UPD_FAILED) {
+    snprintf(t, sizeof t, TR("Asennus epäonnistui: %s", "Installing failed: %s"), fwUpdate.error);
+    fitCopy(line, sizeof line, t, R14, 700);
+    text(g, 44, 316, line, R14, C_BAD);
+  }
+  if (fwUpdate.install || fwUpdate.state == UPD_CHECKING) {      // pressed: waiting for the download to start
+    textC(g, W / 2, 396, TR("Valmistellaan asennusta\x84", "Preparing to install\x84"), B18, C_TEXT2);
+    return;
+  }
+  button(g, UPD_INSTALL, TR("Asenna nyt", "Install now"), true, B18);
+  button(g, UPD_LATER, TR("Myöhemmin", "Later"), false, B18);
+  button(g, UPD_SKIP, TR("Ohita versio", "Skip version"), false, B18);
+}
+
 void uiRender(Adafruit_GFX& g, AppState& s, uint32_t now) {
   g.setTextWrap(false);
   g.fillScreen(C_BG);
@@ -691,6 +757,7 @@ void uiRender(Adafruit_GFX& g, AppState& s, uint32_t now) {
     case S_KEYS: drawKeys(g, now); break;
     case S_CONNECT: drawConnect(g, now); break;
     case S_PLACES: drawPlaces(g, now); break;
+    case S_UPDATE: drawUpdate(g); break;
     default: break;
   }
 }

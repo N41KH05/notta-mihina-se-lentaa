@@ -24,6 +24,7 @@ struct WifiHooks {
   void (*placeChosen)(const Place& p);                // show it on the map to fine-tune
   bool (*needHome)();                                 // ask for home after the first Wi-Fi setup?
   void (*homeSkipped)();                              // "Ohita": keep the default, don't ask again
+  void (*wakeNet)();                                  // the background task: look at fwUpdate now
 };
 
 void uiInit(const WifiHooks* hooks);
@@ -31,6 +32,7 @@ bool uiActive();                                      // a menu is covering the 
 void uiOpenSettings();
 void uiOpenHome(bool firstTime);                      // "Missä koti on?" address search
 void uiOpenWifi(const char* note, bool firstRun, bool alert);  // note: shown above the list (red if alert)
+void uiOpenUpdate();                                  // "a new version is available": install / later / skip
 void uiClose();
 void uiTap(int x, int y, uint32_t nowMs, AppState& s);
 void uiTick(uint32_t nowMs);                          // call often: scans, connecting

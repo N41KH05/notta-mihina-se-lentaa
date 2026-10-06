@@ -295,25 +295,25 @@ void sendPage(const char* msg, bool error) {
     case UPD_CHECKING: o += TR("Tarkistetaan päivityksiä…", "Checking for updates…"); break;
     case UPD_CURRENT: snprintf(ub, sizeof ub, TR("Ajan tasalla (uusin on build %d).", "Up to date (the newest is build %d)."), fwUpdate.latest); o += ub; break;
     case UPD_AVAILABLE:
-      snprintf(ub, sizeof ub, TR("Build %d on saatavilla. ", "Build %d is available. "), fwUpdate.latest); o += ub;
-      o += cfg.autoUpdate && FW_BUILD > 0 ? TR("Se asennetaan, kun laitetta ei ole käytetty hetkeen.", "It installs once the device hasn't been used for a while.")
-                                          : TR("Asenna se alla olevasta napista.", "Install it with the button below.");
+      snprintf(ub, sizeof ub, TR("Build %d on saatavilla", "Build %d is available"), fwUpdate.latest); o += ub;
+      if (fwUpdate.notes[0]) { o += ": "; esc(o, fwUpdate.notes); }
+      o += ". ";
+      o += TR("Asenna se alla olevasta napista tai laitteen asetuksista.", "Install it with the button below or from the device's Settings.");
       break;
     case UPD_INSTALLING: snprintf(ub, sizeof ub, TR("Asennetaan… %d %%", "Installing… %d %%"), (int)fwUpdate.percent); o += ub; break;
-    case UPD_FAILED: o += TR("Viimeisin tarkistus epäonnistui: ", "The last check failed: "); esc(o, fwUpdate.error); break;
+    case UPD_FAILED: o += TR("Viimeisin yritys epäonnistui: ", "The last attempt failed: "); esc(o, fwUpdate.error); break;
   }
-  o += "</p><label class=chk><input type=checkbox name=autoupd"; if (cfg.autoUpdate) o += " checked";
-  o += "> "; o += TR("Päivitä automaattisesti", "Update automatically"); o += "</label><p class=help>";
-  o += TR("Uudet versiot tulevat GitHubista (" UPDATE_REPO "). Laite tarkistaa ne muutaman tunnin välein ja asentaa uuden, "
-          "kun kukaan ei ole koskenut näyttöön 10 minuuttiin. Jos uusi versio ei käynnisty kunnolla, laite palaa edelliseen.",
-          "New versions come from GitHub (" UPDATE_REPO "). The device checks every few hours and installs a new one "
-          "once nobody has touched the screen for 10 minutes. If a new version doesn't start properly, it goes back to the previous one.");
+  o += "</p><p class=help>";
+  o += TR("Uudet versiot tulevat GitHubista (" UPDATE_REPO "). Laite tarkistaa ne muutaman tunnin välein ja kysyy ennen "
+          "asentamista. Jos uusi versio ei käynnisty kunnolla, laite palaa edelliseen.",
+          "New versions come from GitHub (" UPDATE_REPO "). The device checks every few hours and asks before "
+          "installing. If a new version doesn't start properly, it goes back to the previous one.");
   o += "</p></section>";
 
   o += "<button class=save>"; o += TR("Tallenna", "Save"); o += "</button></form>";
   o += "<form method=post action=/update><input type=hidden name=t value=";
   o += formToken;
-  o += "><button class=ghost>"; o += TR("Tarkista ja asenna päivitys nyt", "Check for an update and install it now"); o += "</button></form>";
+  o += "><button class=ghost>"; o += TR("Asenna uusin versio", "Install the newest version"); o += "</button></form>";
   o += "<form method=post action=/restart><input type=hidden name=t value=";
   o += formToken;
   o += "><label class=chk><input type=checkbox name=sure required> ";
@@ -388,7 +388,6 @@ void handleSave() {
   if (dark.length()) c.darkMode = dark == "on" ? DARK_ON : dark == "auto" ? DARK_AUTO : DARK_OFF;
 
   c.photos = server.hasArg("photos");
-  c.autoUpdate = server.hasArg("autoupd");
   String contact = server.arg("contact");
   contact.trim();
   if (contact.length() >= sizeof c.contact || !plainText(contact, "()\"'<>;\\")) err += TR("Yhteystieto on liian pitkä tai siinä on kiellettyjä merkkejä.<br>",
@@ -427,7 +426,7 @@ void handleSave() {
 
 void handleUpdate() {
   if (!allowed() || !fromOwnPage()) return;
-  fwUpdate.requested = true;
+  fwUpdate.install = true;               // checks first if needed; installs only if newer
   xTaskNotifyGive(fetchTask);
   server.sendHeader("Location", "/?upd=1");
   server.send(303);

@@ -4,7 +4,7 @@ A desk display that shows the planes flying around you. It runs on a Waveshare E
 
 The name is Finnish, roughly "so, where's that one flying to?". The screen is in English by default and can be switched to Finnish.
 
-You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html?v=19) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
+You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html?v=20) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
 
 <p align="center"><img src="docs/img/hero.png" width="720" alt="The display with a selected flight from Stockholm to Oulu"></p>
 
@@ -22,7 +22,7 @@ You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa
 - A dark mode in amber and green, either always on or switching at sunset and sunrise.
 - Wi-Fi and home location are set up on the touchscreen. Home can be found by address search.
 - A small settings page for your phone: units, language, dark mode, home, night hours, photos, and an optional AirLabs key for scheduled times.
-- It updates itself: GitHub builds the firmware on every change, and the device installs new builds when nobody is using it, falling back to the previous one if a build doesn't start.
+- Updates like a phone: GitHub builds the firmware on every change, and the device offers new versions with install now / later / skip, falling back to the previous version if a new one doesn't start.
 - It's meant to be left running. It reconnects after power or router cuts, has a watchdog, turns the screen off at night and restarts itself once a day while idle.
 
 ## Building one

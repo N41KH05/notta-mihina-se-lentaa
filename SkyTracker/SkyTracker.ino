@@ -197,7 +197,7 @@ void loadSettings() {
   cfg.darkMode = prefs.getUChar("dark", cfg.darkMode) % 3;
   useDarkTheme(darkWanted(0));         // boot messages too, if dark is always on
   cfg.photos = prefs.getBool("photos", cfg.photos);
-  cfg.autoUpdate = prefs.getBool("autoUpd", cfg.autoUpdate);
+  fwUpdate.skipBuild = prefs.getInt("skipBuild", 0);
   if (prefs.isKey("contact")) prefs.getString("contact", cfg.contact, sizeof cfg.contact);
   if (prefs.isKey("airlabs")) prefs.getString("airlabs", cfg.airlabsKey, sizeof cfg.airlabsKey);
   homeAsked = prefs.getBool("homeAsked", false) || prefs.isKey("homeLat");
@@ -310,6 +310,7 @@ void hSaveSettings() {
   prefs.putBool("altM", units.altM);
   prefs.putUChar("lang", language);
   prefs.putUChar("dark", cfg.darkMode);
+  prefs.putInt("skipBuild", fwUpdate.skipBuild);
   prefs.end();
   languageChanged();
   baseStale = true;                    // range rings and scale bar change unit
@@ -327,7 +328,6 @@ void webSaved(bool homeMoved, bool keyChanged) {
   prefs.putChar("nightEnd", cfg.nightEnd);
   prefs.putUChar("dark", cfg.darkMode);
   prefs.putBool("photos", cfg.photos);
-  prefs.putBool("autoUpd", cfg.autoUpdate);
   prefs.putString("contact", cfg.contact);
   prefs.putString("airlabs", cfg.airlabsKey);
   prefs.putUChar("lang", language);
@@ -400,8 +400,10 @@ void finishPickHome(bool save) {
   xTaskNotifyGive(fetchTask);
 }
 
+void hWakeNet() { xTaskNotifyGive(fetchTask); }
 const WifiHooks wifiHooks = {hScan, hResults, hConnect, hStatus, hCurrent, hConnected, hForget, hDemo,
-                             hSaveSettings, hPlaceSearch, hPlaceResults, hPlaceChosen, hNeedHome, hHomeSkipped};
+                             hSaveSettings, hPlaceSearch, hPlaceResults, hPlaceChosen, hNeedHome, hHomeSkipped,
+                             hWakeNet};
 
 bool connectSaved() {
   if (!savedSsid[0]) return false;
@@ -472,40 +474,54 @@ void confirmFirmware() {
 
 static void updateProgress(int pct) { fwUpdate.percent = pct; }
 
+// Checks every few hours (and when asked); a new version raises fwUpdate.prompt, which
+// opens the update screen. Installing only happens when someone presses "install".
 void updateTick() {
   static uint32_t nextCheck = 120000;           // first look two minutes after starting
-  bool manual = fwUpdate.requested;
-  if (!manual && (int32_t)(millis() - nextCheck) < 0) return;
-  if (WiFi.status() != WL_CONNECTED) return;
-  fwUpdate.requested = false;
-  nextCheck = millis() + UPDATE_CHECK_HOURS * 3600000UL;
-  fwUpdate.state = UPD_CHECKING;
-  char url[256], err[64] = "";
-  uint32_t size = 0;
-  int latest = netLatestFirmware(url, sizeof url, &size, err, sizeof err);
-  fwUpdate.checkedEpoch = time(nullptr);
-  if (!latest) {
-    snprintf(fwUpdate.error, sizeof fwUpdate.error, "%s", err);
-    fwUpdate.state = UPD_FAILED;
-    Serial.printf("Update check: %s\n", err);
+  static char url[256];
+  static uint32_t size = 0;
+  static int urlBuild = 0;                      // the build url points to
+  bool asked = fwUpdate.check, install = fwUpdate.install;
+  if (!asked && !install && (int32_t)(millis() - nextCheck) < 0) return;
+  fwUpdate.check = false;
+  fwUpdate.install = false;
+  char err[64] = "";
+  if (WiFi.status() != WL_CONNECTED) {
+    if (asked || install) {
+      snprintf(fwUpdate.error, sizeof fwUpdate.error, "%s", TR("ei Wi-Fi-yhteyttä", "no Wi-Fi connection"));
+      fwUpdate.state = UPD_FAILED;
+    }
     return;
   }
-  fwUpdate.latest = latest;
-  Serial.printf("Update check: running build %d, newest %d\n", FW_BUILD, latest);
-  if (latest <= FW_BUILD) { fwUpdate.state = UPD_CURRENT; return; }
-  // Automatic only for builds that came from GitHub themselves (an Arduino IDE build is 0,
-  // and is kept until asked), and only when nobody has touched the screen for 10 minutes.
-  bool idle = millis() - lastInput > 10 * 60000UL && !uiActive();
-  if (!manual && !(cfg.autoUpdate && FW_BUILD > 0 && idle)) {
+  if (!install || !urlBuild) {                  // find out what the newest version is
+    nextCheck = millis() + UPDATE_CHECK_HOURS * 3600000UL;
+    fwUpdate.state = UPD_CHECKING;
+    char notes[80] = "";
+    int latest = netLatestFirmware(url, sizeof url, &size, notes, sizeof notes, err, sizeof err);
+    if (!latest) {
+      snprintf(fwUpdate.error, sizeof fwUpdate.error, "%s", err);
+      fwUpdate.state = UPD_FAILED;
+      Serial.printf("Update check: %s\n", err);
+      return;
+    }
+    urlBuild = latest;
+    fwUpdate.latest = latest;
+    snprintf(fwUpdate.notes, sizeof fwUpdate.notes, "%s", notes);
+    Serial.printf("Update check: running build %d, newest %d\n", FW_BUILD, latest);
+  }
+  if (urlBuild <= FW_BUILD) { fwUpdate.state = UPD_CURRENT; return; }
+  if (!install) {
     fwUpdate.state = UPD_AVAILABLE;
-    if (cfg.autoUpdate && FW_BUILD > 0) nextCheck = millis() + 15 * 60000UL;   // try again when idle
+    // Ask, unless this version was skipped or "later" hasn't come yet (asking by hand always shows it).
+    if (asked || (urlBuild != fwUpdate.skipBuild && (int32_t)(millis() - fwUpdate.remindAt) >= 0))
+      fwUpdate.prompt = true;
     return;
   }
-  Serial.printf("Installing build %d (%u bytes)\n", latest, (unsigned)size);
+  Serial.printf("Installing build %d (%u bytes)\n", urlBuild, (unsigned)size);
   fwUpdate.percent = 0;
   fwUpdate.state = UPD_INSTALLING;
   if (netInstallFirmware(url, size, updateProgress, err, sizeof err)) {
-    restartNow("firmware update", !backlightOn);   // dark at night: stay dark
+    restartNow("firmware update", !backlightOn);
     return;
   }
   snprintf(fwUpdate.error, sizeof fwUpdate.error, "%s", err);
@@ -677,6 +693,11 @@ void loop() {
     return;
   }
   wifiWatch();
+  // A new version found in the background: ask, once the screen is on and nobody is busy with it.
+  if (fwUpdate.prompt && backlightOn && !uiActive() && millis() - lastInput > 20000) {
+    fwUpdate.prompt = false;
+    uiOpenUpdate();
+  }
   Ev e;
   bool got = false, viewChanged = false, dragging = false;
   // Menus (settings, Wi-Fi setup) cover the whole screen and only use taps.

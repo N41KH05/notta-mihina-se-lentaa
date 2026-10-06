@@ -714,9 +714,11 @@ size_t gunzip(const uint8_t* in, size_t n, uint8_t** out, size_t maxOut) {
 // ---------------------------------------------------------------------------
 //  Firmware updates: GitHub releases tagged build-<number>, each with a SkyTracker.bin
 // ---------------------------------------------------------------------------
-int netLatestFirmware(char* url, size_t urlLen, uint32_t* size, char* err, size_t errLen) {
+int netLatestFirmware(char* url, size_t urlLen, uint32_t* size, char* notes, size_t notesLen,
+                      char* err, size_t errLen) {
   JsonDocument filter;
   filter["tag_name"] = true;
+  filter["body"] = true;
   JsonObject a = filter["assets"][0].to<JsonObject>();
   a["name"] = true;
   a["browser_download_url"] = true;
@@ -733,6 +735,10 @@ int netLatestFirmware(char* url, size_t urlLen, uint32_t* size, char* err, size_
     snprintf(err, errLen, "%s %s", TR("outo julkaisu", "unexpected release"), tag);
     return 0;
   }
+  // The notes start with the commit message: its first line says what changed.
+  copyStr(notes, notesLen, doc["body"] | "");
+  for (char* c = notes; *c; c++)
+    if (*c == '\r' || *c == '\n') { *c = 0; break; }
   for (JsonObject f : doc["assets"].as<JsonArray>()) {
     if (strcmp(f["name"] | "", "SkyTracker.bin") != 0) continue;
     copyStr(url, urlLen, f["browser_download_url"] | "");
