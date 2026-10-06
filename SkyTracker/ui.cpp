@@ -238,11 +238,14 @@ void drawSettings(Adafruit_GFX& g, AppState& s) {
     bool avail = fwUpdate.state == UPD_AVAILABLE, busy = fwUpdate.state == UPD_CHECKING || checkAsked;
     button(g, SET_UPDATE, busy ? TR("Tarkistetaan\x84", "Checking\x84") : avail ? TR("Päivitys saatavilla", "Update available")
                                  : TR("Tarkista päivitykset", "Check for updates"), avail, B14);
-    const char* note = nullptr;
-    uint16_t nc = C_TEXT2;
-    if (fwUpdate.state == UPD_CURRENT) note = TR("Ohjelmisto on ajan tasalla", "The software is up to date");
-    else if (fwUpdate.state == UPD_FAILED) { note = TR("Tarkistus epäonnistui", "The check failed"); nc = C_BAD; }
-    if (note && !busy) textC(g, SET_UPDATE.x + SET_UPDATE.w / 2, SET_UPDATE.y + SET_UPDATE.h + 8, note, R12, nc);
+    if (!busy && fwUpdate.state == UPD_CURRENT)
+      textC(g, SET_UPDATE.x + SET_UPDATE.w / 2, SET_UPDATE.y + SET_UPDATE.h + 8, TR("Ohjelmisto on ajan tasalla", "The software is up to date"), R12, C_TEXT2);
+    else if (!busy && fwUpdate.state == UPD_FAILED) {      // with the reason, e.g. "GitHub: HTTP 403"
+      char why[100], line[100];
+      snprintf(why, sizeof why, TR("Tarkistus epäonnistui: %s", "The check failed: %s"), fwUpdate.error);
+      fitCopy(line, sizeof line, why, R12, 400);
+      textR(g, SET_UPDATE.x + SET_UPDATE.w, SET_UPDATE.y + SET_UPDATE.h + 8, line, R12, C_BAD);
+    }
   }
   // Phone settings page (web.cpp): address and a QR code to open it
   if (cur[0] && ip[0]) {
