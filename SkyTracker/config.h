@@ -92,6 +92,14 @@
 #define TRAIL_POINTS    40         // breadcrumbs per plane (40 x 4 s = under 3 min)
 #define MAX_PLANES      400
 
+// ---- Logbook ------------------------------------------------------------------------
+// Every aircraft passing within this distance of home is counted and, with a micro SD
+// card in the board, saved in monthly CSV files. Can be changed on the phone page.
+// Away from big airports 100 km catches the overflights as well as the local traffic.
+#define LOG_RADIUS_KM       100
+// With the screen off at night only the logbook needs positions: fetched this often.
+#define NIGHT_POLL_SECONDS  30
+
 // ---- Firmware updates ---------------------------------------------------------------
 // GitHub Actions builds the firmware on every push and publishes it as a release (see
 // .github/workflows/firmware.yml). The device checks every few hours and, like a phone,

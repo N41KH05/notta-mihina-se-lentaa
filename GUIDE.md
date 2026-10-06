@@ -7,6 +7,7 @@ How to build, set up and use the display. Most settings can be changed on the de
 - Waveshare ESP32-S3-Touch-LCD-7, the touch version (800×480)
 - A USB-C cable and a phone charger (5 V, at least 1 A)
 - Something to stand it in. There's a printable case in `case/`, or any small tablet stand works.
+- Optional: a micro SD card (any size, FAT32) in the slot on the back, so the logbook is kept over restarts.
 
 ## Installing
 
@@ -45,6 +46,7 @@ Once it's connected it asks **Where is home?** Home is the centre of the map and
 - Drag to move the map, pinch or use + and − to zoom. The house button goes back to home.
 - The list on the right shows the planes in view, nearest first. Drag it up and down to scroll through them.
 - Tap a plane, on the map or in the list, to see its details. **FOLLOW** keeps it centred; **CLOSE** or a tap on empty map goes back to the list.
+- The book under the magnifier opens the logbook (below).
 - The magnifier in the top right finds a flight anywhere in the world. Type the flight number (AY1431), the callsign (FIN1431) or the registration (OH-LVA) and pick it from the results: the map jumps there and follows it. Only planes in the air right now can be found. Planes already on the map show up even for part of a name, so FIN lists every Finnair plane in view.
 - The line under the flight number names the airline. For planes without one, such as private planes and flying clubs, it shows the aircraft's registered owner instead. When an airliner belongs to someone other than the airline flying it (usually a leasing company), the owner is shown under the registration. Both come from adsbdb.
 - The selected plane's path since take-off is drawn on the map, coloured by altitude, and keeps growing as it flies. It comes from adsb.lol's track history. If that isn't available, a dashed line from the departure airport is shown instead.
@@ -69,6 +71,24 @@ When you tap a plane, a photo card appears in a top corner of the map. Tap the c
 
 Photos come from [Planespotters.net](https://www.planespotters.net), looked up by the plane's transponder code and then by registration. Their terms require crediting the photographer and linking the photo page, so the card shows the photographer's name and a QR code for the page. Nothing is saved on the device. Planespotters also asks apps to give a contact address; put your email on the phone settings page. Photos can be turned off on the same page.
 
+## Logbook
+
+Every aircraft that comes within 100 km of home is written down. A pass ends once the plane has been out of the circle for 10 minutes; then it's counted, along with the closest it got and its altitude there. The book button on the map shows:
+
+- **Today**: how many went by, how many of them for the first time, a bar for each hour, the closest pass and the rarest type of the day.
+- **All time**: passes, different aircraft and types, the three most common types, the aircraft seen most often and the closest pass ever.
+- **Latest newcomers**: the last aircraft that had never been by before.
+
+An aircraft inside the circle for the first time gets a green **NEW** on its map label and in the list. (Not during the first day of logging, when everything would be new.) Tapping a plane shows how many times it has passed before.
+
+The counting only happens while the map's data covers the whole circle, which it does from the home view. While you're looking at somewhere far away, nothing is counted and no pass is cut short. At night, with the screen off, the device keeps fetching positions every 30 seconds just for the logbook.
+
+With a micro SD card in the board, each month goes into its own file, `skytracker/2026-10.csv` on the card, one line per pass: date, time, transponder code, callsign, registration, type, closest distance (km), altitude (ft) and whether it was a first visit. The files open in Excel or any spreadsheet. A file started while the screen is in Finnish uses semicolons and decimal commas, which is what a Finnish Excel expects; in English, commas and points. They can be downloaded from the phone settings page, or read straight off the card on a computer. At start-up the device reads them back, so the counts carry on after a restart or a power cut. A year of a busy area is a few megabytes.
+
+Without a card the logbook still works, but only in memory: it starts from zero at every restart.
+
+The circle can be made smaller or bigger (25 to 250 km) on the phone settings page. A small one only counts what flies right overhead; around a smaller town a bigger one is more fun, since it also catches the airliners crossing the region. It only affects passes from then on.
+
 ## Settings page on your phone
 
 Open Settings on the device. At the bottom it shows an address like `http://192.168.1.42` and a QR code; open that on a phone on the same Wi-Fi. `http://skytracker.local` often works too. The page is in the same language as the device and has:
@@ -77,6 +97,7 @@ Open Settings on the device. At the bottom it shows an address like `http://192.
 - language and units
 - home: the label on the map and its coordinates (a decimal comma or point both work)
 - dark mode (off, on, or after sunset), and turning the screen off at night with its hours
+- the logbook: today's and all-time counts, the size of the circle, and the monthly files to download
 - photos on or off, and the contact email for Planespotters
 - the AirLabs key (only the last 4 characters are shown; leave the field empty to keep it)
 

@@ -25,9 +25,11 @@
 #include "net.h"
 #include "demo.h"
 #include "ui.h"
+#include "logbook.h"
 
 AppState state;
 SemaphoreHandle_t lock;
+SemaphoreHandle_t sdMutex;         // one user of the SD card at a time (web.cpp too)
 QueueHandle_t events;
 TaskHandle_t fetchTask;
 Canvas canvas(SCREEN_W, SCREEN_H, false), baseCanvas(SCREEN_W, SCREEN_H, false);   // draw into our buffers
@@ -64,7 +66,14 @@ void fetchLoop(void*) {
     if ((int32_t)(millis() - screenTestUntil) < 0) continue;   // screen test: the bus stays quiet
     updateTick();                      // new firmware? (also at night, with the screen off)
     sdTick();
-    if (state.night) continue;
+    if (state.night) {                 // screen off: positions only for the logbook, less often
+      static uint32_t lastNight = 0;
+      if (!state.demo && WiFi.status() == WL_CONNECTED && millis() - lastNight >= NIGHT_POLL_SECONDS * 1000UL) {
+        lastNight = millis();
+        netFetchPlanes(state, lock);
+      }
+      continue;
+    }
     if (state.demo) {
       xSemaphoreTake(lock, portMAX_DELAY);
       time_t t = time(nullptr);
@@ -195,6 +204,7 @@ void loadSettings() {
   fwUpdate.skipBuild = prefs.getInt("skipBuild", 0);
   if (prefs.isKey("contact")) prefs.getString("contact", cfg.contact, sizeof cfg.contact);
   if (prefs.isKey("airlabs")) prefs.getString("airlabs", cfg.airlabsKey, sizeof cfg.airlabsKey);
+  cfg.logKm = constrain(prefs.getUShort("logKm", cfg.logKm), 10, 250);
   homeAsked = prefs.getBool("homeAsked", false) || prefs.isKey("homeLat");
   prefs.end();
   Serial.printf("Settings: wifi \"%s\", units %s/%s/%s%s\n", savedSsid, units.distKm ? "km" : "nm",
@@ -325,6 +335,7 @@ void webSaved(bool homeMoved, bool keyChanged) {
   prefs.putBool("photos", cfg.photos);
   prefs.putString("contact", cfg.contact);
   prefs.putString("airlabs", cfg.airlabsKey);
+  prefs.putUShort("logKm", cfg.logKm);
   prefs.putUChar("lang", language);
   prefs.end();
   languageChanged();
@@ -702,8 +713,12 @@ void healthCheck(bool idleLong) {
 }
 
 // ---------------------------------------------------------------------------
-//  Micro SD card: a check at start-up, then a small write once a minute
+//  Micro SD card: a check at start-up, then the logbook (logbook.h)
 // ---------------------------------------------------------------------------
+struct SdLock {
+  SdLock() { xSemaphoreTake(sdMutex, portMAX_DELAY); }
+  ~SdLock() { xSemaphoreGive(sdMutex); }
+};
 static void sdFail(const char* what) {
   sdStatus.state = SD_FAILED;
   snprintf(sdStatus.error, sizeof sdStatus.error, "%s", what);
@@ -735,22 +750,135 @@ void sdCheck() {
   char line[96];
   snprintf(line, sizeof line, "SkyTracker build %d started\n", FW_BUILD);
   if (!sdWriteCheck("/skytracker/check.txt", line)) { sdFail(TR("kirjoitus ei onnistunut", "writing failed")); return; }
+  SD.remove("/skytracker/alive.txt");      // (from the card test in build 18)
   sdStatus.state = SD_OK;
   sdStatus.writes = 1;
   sdSpace();
   Serial.printf("SD card: OK, %u MB, %u MB free\n", (unsigned)sdStatus.totalMB, (unsigned)sdStatus.freeMB);
 }
-// Runs in the fetch task. Keeps the card in use, so problems (or screen lines while
-// it is written) show up now rather than once the logbook depends on it.
+
+// A logbook file name: "2026-10.csv".
+static bool isLogFile(const char* name) {
+  const char* slash = strrchr(name, '/');
+  if (slash) name = slash + 1;
+  if (strlen(name) != 11 || strcmp(name + 7, ".csv") || name[4] != '-') return false;
+  for (int i : {0, 1, 2, 3, 5, 6}) if (name[i] < '0' || name[i] > '9') return false;
+  return true;
+}
+// Start-up: read every logbook file back (oldest first) to rebuild the counts.
+void logReplayTask(void*) {
+  while (time(nullptr) < 1600000000) vTaskDelay(pdMS_TO_TICKS(1000));   // the files are in local time
+  xSemaphoreTake(lock, portMAX_DELAY);
+  logbookSetClock((uint32_t)time(nullptr));
+  xSemaphoreGive(lock);
+  const int MAX_FILES = 240;                                             // 20 years of months
+  char (*names)[12] = (char(*)[12])heap_caps_malloc(MAX_FILES * 12, MALLOC_CAP_SPIRAM);
+  const int BATCH = 64;
+  char (*lines)[160] = (char(*)[160])heap_caps_malloc(BATCH * 160, MALLOC_CAP_SPIRAM);
+  int nFiles = 0;
+  uint32_t t0 = millis(), nLines = 0;
+  if (names && lines) {
+    {
+      SdLock l;
+      File dir = SD.open("/skytracker");
+      for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+        const char* nm = strrchr(f.name(), '/') ? strrchr(f.name(), '/') + 1 : f.name();
+        if (!f.isDirectory() && isLogFile(nm) && nFiles < MAX_FILES) snprintf(names[nFiles++], 12, "%s", nm);
+        f.close();
+      }
+      dir.close();
+    }
+    qsort(names, nFiles, 12, [](const void* a, const void* b) { return strcmp((const char*)a, (const char*)b); });
+    for (int i = 0; i < nFiles; i++) {
+      char path[32];
+      snprintf(path, sizeof path, "/skytracker/%s", names[i]);
+      File f;
+      { SdLock l; f = SD.open(path, FILE_READ); }
+      if (!f) continue;
+      for (;;) {
+        int n = 0;
+        {
+          SdLock l;
+          while (n < BATCH && f.available()) {
+            size_t len = f.readBytesUntil('\n', lines[n], 159);
+            lines[n][len] = 0;
+            if (len && lines[n][len - 1] == '\r') lines[n][len - 1] = 0;
+            n++;
+          }
+        }
+        if (!n) break;
+        nLines += n;
+        xSemaphoreTake(lock, portMAX_DELAY);
+        for (int k = 0; k < n; k++) logbookReplay(lines[k]);
+        xSemaphoreGive(lock);
+        vTaskDelay(1);
+      }
+      SdLock l;
+      f.close();
+    }
+  }
+  xSemaphoreTake(lock, portMAX_DELAY);
+  logbookReplayDone(sdStatus.state == SD_OK);
+  const LogStats& L = logbookStats();
+  xSemaphoreGive(lock);
+  Serial.printf("Logbook: %d files, %lu lines, %lu passes of %lu aircraft (%lu ms)\n", nFiles, (unsigned long)nLines,
+                (unsigned long)L.passes, (unsigned long)L.aircraft, (unsigned long)(millis() - t0));
+  heap_caps_free(names);
+  heap_caps_free(lines);
+  vTaskDelete(nullptr);
+}
+
+// Runs in the fetch task: writes finished passes to this month's file.
 void sdTick() {
-  static uint32_t next = 60000;
-  if (sdStatus.state != SD_OK || (int32_t)(millis() - next) < 0) return;
-  next = millis() + 60000;
-  char line[96];
-  snprintf(line, sizeof line, "build %d, up %lu min, %d planes\n", FW_BUILD, (unsigned long)(millis() / 60000), state.nPlanes);
-  if (!sdWriteCheck("/skytracker/alive.txt", line)) { sdFail(TR("kirjoitus epäonnistui käytössä", "a write failed while running")); return; }
-  sdStatus.writes++;
-  if (sdStatus.writes % 30 == 0) sdSpace();
+  if (sdStatus.state != SD_OK) return;
+  static LogPass batch[16];
+  static char curPath[32] = "";
+  static char sep = ',';
+  static uint32_t nextSpace = 0;
+  xSemaphoreTake(lock, portMAX_DELAY);
+  int n = logbookPending(batch, 16);
+  xSemaphoreGive(lock);
+  if (!n) return;
+  int done = 0;
+  {
+    SdLock l;
+    for (; done < n; done++) {
+      char path[32], line[160];
+      logbookPath(batch[done], path, sizeof path);
+      if (strcmp(path, curPath)) {                 // a new month (or the first write): which separator?
+        File f = SD.open(path, FILE_READ);
+        if (f) {
+          char head[160];
+          size_t len = f.readBytesUntil('\n', head, sizeof head - 1);
+          head[len] = 0;
+          f.close();
+          sep = strchr(head, ';') ? ';' : ',';
+        } else {                                   // a new file: the header first
+          logbookHeader(line, sizeof line);
+          f = SD.open(path, FILE_WRITE);
+          if (!f) break;
+          size_t w = f.print(line);
+          f.close();
+          if (w != strlen(line)) break;
+          sep = language == LANG_FI ? ';' : ',';
+        }
+        snprintf(curPath, sizeof curPath, "%s", path);
+      }
+      logbookLine(batch[done], sep, line, sizeof line);
+      File f = SD.open(path, FILE_APPEND);
+      if (!f) break;
+      size_t w = f.print(line);
+      f.close();
+      if (w != strlen(line)) break;
+      sdStatus.writes++;
+    }
+    if ((int32_t)(millis() - nextSpace) >= 0) { nextSpace = millis() + 600000; sdSpace(); }
+  }
+  xSemaphoreTake(lock, portMAX_DELAY);
+  logbookPop(done);
+  if (done < n) logbookReplayDone(false);          // stop saving (the counts carry on)
+  xSemaphoreGive(lock);
+  if (done < n) { curPath[0] = 0; sdFail(TR("lokikirjan kirjoitus epäonnistui", "writing the logbook failed")); }
 }
 
 // ---------------------------------------------------------------------------
@@ -770,6 +898,8 @@ void setup() {
 
   loadSettings();                      // before anything is drawn
   lock = xSemaphoreCreateMutex();
+  sdMutex = xSemaphoreCreateMutex();
+  logbookInit();
   events = xQueueCreate(64, sizeof(Ev));
   memset(&state, 0, sizeof state);
   state.planes = (Plane*)heap_caps_calloc(MAX_PLANES, sizeof(Plane), MALLOC_CAP_SPIRAM);
@@ -783,6 +913,8 @@ void setup() {
   baseCanvas.use(baseBuf);
   if (!boardInit()) { for (;;) delay(1000); }
   sdCheck();
+  if (sdStatus.state == SD_OK) xTaskCreatePinnedToCore(logReplayTask, "logbook", 6144, nullptr, 1, nullptr, 0);
+  else logbookReplayDone(false);       // nothing to read back: the counts start from zero
   message(APP_NAME, TR("Käynnistyy…", "Starting…"));
   quietBoot = quiet;
   if (quiet) {                         // planned restart at night: stay dark until touched
@@ -966,6 +1098,7 @@ void loop() {
         switch (appTap(state, e.x, e.y, millis(), requestRouteLocked)) {
           case HIT_SETTINGS: uiOpenSettings(); break;
           case HIT_SEARCH: uiOpenFlightSearch(); break;
+          case HIT_LOGBOOK: uiOpenLogbook(); break;
           case HIT_PICK_SAVE: finishPickHome(true); break;
           case HIT_PICK_CANCEL: finishPickHome(false); break;
           default: break;
@@ -987,8 +1120,11 @@ void loop() {
   if (isNightHour() && idleLong) {
     if (backlightOn) {
       backlightOn = false;
-      state.night = true;
       boardBacklight(false);
+      xSemaphoreTake(lock, portMAX_DELAY);
+      state.night = true;
+      if (!state.pickHome) appGoHome(state);       // the night's fetches cover the logbook circle
+      xSemaphoreGive(lock);
     }
     delay(50);
     return;

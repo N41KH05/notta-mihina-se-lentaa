@@ -38,6 +38,7 @@ void uiOpenHome(bool firstTime);                      // "Missä koti on?" addre
 void uiOpenWifi(const char* note, bool firstRun, bool alert);  // note: shown above the list (red if alert)
 void uiOpenUpdate();                                  // "a new version is available": install / later / skip
 void uiOpenFlightSearch();                            // the magnifier: type a flight to find
+void uiOpenLogbook();                                 // the book: today's and all-time counts
 void uiClose();
 void uiTap(int x, int y, uint32_t nowMs, AppState& s);
 void uiTick(uint32_t nowMs);                          // call often: scans, connecting

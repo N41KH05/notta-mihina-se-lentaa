@@ -1,6 +1,7 @@
 // Live data: plane positions from adsb.fi / airplanes.live / adsb.lol,
 // flight routes from adsbdb.com.
 #include "net.h"
+#include "logbook.h"
 #include <esp_task_wdt.h>
 #include <Arduino.h>
 #include <WiFi.h>
@@ -184,6 +185,9 @@ int trafficRadiusNm(const AppState& s) {
   int radius = (int)ceil(halfDiag / 1852);
   if (radius < 5) radius = 5;
   if (radius > 250) radius = 250;
+  // Reach the whole logbook circle around home too, if the services allow it.
+  int reach = (int)ceil(logbookReachKm(lat, lonFromX(s.cx)) / 1.852);
+  if (reach > radius && reach <= 250) radius = reach;
   return radius;
 }
 
@@ -418,6 +422,7 @@ void netFetchPlanes(AppState& s, void* lock) {
   s.fetchCy = cy;
   s.fetchRadiusNm = radius;
   if (s.apiOk) {
+    logbookObserve(incoming, n, lat, lon, radius * 1.852, (uint32_t)time(nullptr));
     trafficMerge(s, incoming, n);
     pathFollow(s);                         // the selected plane's path grows with it
     s.updatedEpoch = time(nullptr);

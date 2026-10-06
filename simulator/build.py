@@ -16,7 +16,7 @@ subprocess.check_call([sys.executable, "-m", "ziglang", "c++", "-target", "wasm3
     "-fno-exceptions", "-fno-rtti", "-std=gnu++17", "-DARDUINO=100", "-w",
     "-I" + os.path.join(HERE, "shim"), "-I" + GFX, "-I" + SK, "-mexec-model=reactor", "-Wl,--no-entry",
     "-g0", "-Wl,--strip-all",                    # no debug info: a much smaller download
-    os.path.join(HERE, "sim.cpp"), *[os.path.join(SK, f) for f in ("render.cpp", "ui.cpp", "demo.cpp", "mapdata.cpp")],
+    os.path.join(HERE, "sim.cpp"), *[os.path.join(SK, f) for f in ("render.cpp", "ui.cpp", "demo.cpp", "logbook.cpp", "mapdata.cpp")],
     os.path.join(GFX, "Adafruit_GFX.cpp"), qr_obj, "-o", wasm])
 os.remove(qr_obj)
 print("Wrote docs/sim.wasm (the page itself is docs/simulator.html, .css and .js)")

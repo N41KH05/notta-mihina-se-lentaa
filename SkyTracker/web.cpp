@@ -2,7 +2,9 @@
 // hours, plane photos and the AirLabs key can be changed here; everything is saved
 // in flash like the on-screen settings. The page follows the device language.
 #include "net.h"
+#include "logbook.h"
 #include <Arduino.h>
+#include <SD.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
@@ -10,6 +12,7 @@
 #include <freertos/semphr.h>
 #include <time.h>
 #include <initializer_list>
+#include <algorithm>
 
 void webSaved(bool homeMoved, bool keyChanged);   // SkyTracker.ino: store and apply
 const char* resetReasonText();                    // SkyTracker.ino: why it last started
@@ -17,6 +20,7 @@ void restartNow(const char* why, bool quiet);     // SkyTracker.ino
 uint32_t uptimeMinutes();
 
 extern TaskHandle_t fetchTask;      // SkyTracker.ino: woken for "update now"
+extern SemaphoreHandle_t sdMutex;   // SkyTracker.ino: one user of the SD card at a time
 
 namespace {
 WebServer server(80);
@@ -28,6 +32,18 @@ struct Locked {
   Locked() { xSemaphoreTake(mtx, portMAX_DELAY); }
   ~Locked() { xSemaphoreGive(mtx); }
 };
+struct SdLocked {
+  SdLocked() { xSemaphoreTake(sdMutex, portMAX_DELAY); }
+  ~SdLocked() { xSemaphoreGive(sdMutex); }
+};
+const int LOG_KMS[] = {25, 50, 100, 150, 200, 250};   // choices for the logbook circle
+
+// "2026-10": a month's logbook file.
+bool isMonth(const String& m) {
+  if (m.length() != 7 || m[4] != '-') return false;
+  for (int i : {0, 1, 2, 3, 5, 6}) if (!isdigit((uint8_t)m[i])) return false;
+  return true;
+}
 
 char formToken[33];               // random per boot; every form must send it back
 
@@ -135,6 +151,7 @@ input:focus,select:focus{outline:2px solid var(--amber);outline-offset:1px}
 .seg{display:flex;gap:6px;margin-bottom:4px}.seg input{display:none}
 .seg label{flex:1;text-align:center;padding:9px 4px;cursor:pointer;font-weight:700;color:var(--amber);border:1px solid var(--line2);border-radius:8px;background:var(--field)}
 .seg input:checked+label{color:var(--green);border-color:var(--green);background:rgba(106,226,139,.10)}
+.files{list-style:none;padding:0;margin:8px 0 0;display:grid;gap:6px}.files a{display:flex;justify-content:space-between;padding:9px 12px;border:1px solid var(--line2);border-radius:8px;text-decoration:none;font-weight:600}.files small{color:var(--text2);font-weight:400}
 .chk{display:flex;align-items:center;gap:10px;margin:6px 0;font-weight:600}.chk input{width:20px;height:20px;accent-color:var(--green)}
 .help{font-size:13px;color:var(--text2);margin:8px 0 0}
 .msg{border-radius:10px;padding:12px 14px;margin:12px 0;font-weight:600;border:1px solid}.ok{background:rgba(106,226,139,.10);color:var(--green);border-color:rgba(106,226,139,.4)}.err{background:rgba(255,107,94,.10);color:var(--bad);border-color:rgba(255,107,94,.4)}
@@ -159,9 +176,41 @@ void sendPage(const char* msg, bool error) {
   }
   Config c = cfg;
   Units u = units;
+  LogStats L;
+  {
+    Locked l;
+    L = logbookStats();
+  }
+  // The logbook's monthly files, newest first.
+  struct LogFile { char month[8]; uint32_t kb; };
+  static LogFile files[24];
+  int nFiles = 0;
+  if (sdStatus.state == SD_OK) {
+    SdLocked l;
+    File dir = SD.open("/skytracker");
+    for (File f = dir ? dir.openNextFile() : File(); f; f = dir.openNextFile()) {
+      String nm = f.name();
+      int slash = nm.lastIndexOf('/');
+      if (slash >= 0) nm = nm.substring(slash + 1);
+      if (!f.isDirectory() && nm.endsWith(".csv") && isMonth(nm.substring(0, 7)) && nm.length() == 11) {
+        LogFile e;
+        snprintf(e.month, sizeof e.month, "%s", nm.substring(0, 7).c_str());
+        e.kb = (f.size() + 1023) / 1024;
+        if (nFiles < 24) files[nFiles++] = e;
+        else {                                       // keep the newest 24
+          int oldest = 0;
+          for (int i = 1; i < 24; i++) if (strcmp(files[i].month, files[oldest].month) < 0) oldest = i;
+          if (strcmp(e.month, files[oldest].month) > 0) files[oldest] = e;
+        }
+      }
+      f.close();
+    }
+    if (dir) dir.close();
+  }
+  std::sort(files, files + nFiles, [](const LogFile& a, const LogFile& b) { return strcmp(a.month, b.month) > 0; });
 
   String o;
-  o.reserve(11000);
+  o.reserve(14000);
   o += "<!doctype html><html lang=";
   o += TR("fi", "en");
   o += "><head><meta charset=utf-8>"
@@ -260,6 +309,68 @@ void sendPage(const char* msg, bool error) {
   o += TR("Näyttö sammuu, kun sitä ei ole kosketettu 5 minuuttiin. Napautus herättää sen.",
           "The screen turns off once it has not been touched for 5 minutes. A tap wakes it.");
   o += "</p></section>";
+
+  // ---- logbook
+  o += "<section class=card><h2>"; o += TR("Lokikirja", "Logbook"); o += "</h2><dl>";
+  if (!L.ready) {
+    o += "<dt>"; o += TR("Tila", "Status"); o += "</dt><dd>"; o += TR("luetaan SD-kortilta…", "reading the SD card…"); o += "</dd>";
+  } else {
+    char lb[96], a[16], b[16], c3[16];
+    auto group = [](char* out, unsigned long v) {     // 12 345 / 12,345
+      char t[16];
+      snprintf(t, sizeof t, "%lu", v);
+      int len = strlen(t), o = 0;
+      for (int i = 0; i < len; i++) {
+        out[o++] = t[i];
+        if ((len - i - 1) % 3 == 0 && i < len - 1) out[o++] = thousandsSep();
+      }
+      out[o] = 0;
+    };
+    group(a, L.today);
+    if (L.todayNew) snprintf(lb, sizeof lb, TR("%s ohitusta, %d ensi kertaa", "%s passes, %d first-timers"), a, L.todayNew);
+    else snprintf(lb, sizeof lb, TR("%s ohitusta", "%s passes"), a);
+    o += "<dt>"; o += TR("Tänään", "Today"); o += "</dt><dd>"; o += lb; o += "</dd>";
+    group(a, L.passes);
+    group(b, L.aircraft);
+    group(c3, L.types);
+    snprintf(lb, sizeof lb, TR("%s ohitusta, %s konetta, %s tyyppiä", "%s passes, %s aircraft, %s types"), a, b, c3);
+    o += "<dt>"; o += TR("Kaikkiaan", "All time"); o += "</dt><dd>"; o += lb; o += "</dd>";
+    if (L.since) {
+      time_t t = L.since;
+      struct tm lt;
+      localtime_r(&t, &lt);
+      snprintf(lb, sizeof lb, "%d.%d.%d", lt.tm_mday, lt.tm_mon + 1, lt.tm_year + 1900);
+      if (language == LANG_EN) strftime(lb, sizeof lb, "%-d %b %Y", &lt);
+      o += "<dt>"; o += TR("Alkaen", "Since"); o += "</dt><dd>"; o += lb; o += "</dd>";
+    }
+  }
+  o += "</dl><label class=f for=lk>"; o += TR("Säde kodin ympärillä", "Radius around home");
+  o += "</label><select id=lk name=log_km>";
+  for (int km : LOG_KMS) {
+    char ob[64];
+    snprintf(ob, sizeof ob, "<option value=%d%s>%d km</option>", km, km == c.logKm ? " selected" : "", km);
+    o += ob;
+  }
+  o += "</select><p class=help>";
+  o += TR("Ohitus kirjataan, kun kone on ollut 10 minuuttia poissa ympyrästä. Isompi ympyrä kerää myös ohi lentävät reittikoneet. ",
+          "A pass is logged once the plane has been out of the circle for 10 minutes. A bigger circle also catches the airliners flying over. ");
+  if (sdStatus.state == SD_OK)
+    o += TR("Jokainen kuukausi on SD-kortilla omana CSV-tiedostonaan, joka aukeaa Excelissä:",
+            "Each month is saved on the SD card as a CSV file that opens in Excel:");
+  else
+    o += TR("Ilman SD-korttia lokikirja on vain muistissa ja alkaa alusta, kun laite käynnistyy uudelleen.",
+            "Without an SD card the logbook is only kept in memory and starts over when the device restarts.");
+  o += "</p>";
+  if (nFiles) {
+    o += "<ul class=files>";
+    for (int i = 0; i < nFiles; i++) {
+      char fb[160];
+      snprintf(fb, sizeof fb, "<li><a href='/log?m=%s'>%s.csv <small>%lu kB</small></a></li>", files[i].month, files[i].month, (unsigned long)files[i].kb);
+      o += fb;
+    }
+    o += "</ul>";
+  }
+  o += "</section>";
 
   // ---- photos
   o += "<section class=card><h2>"; o += TR("Koneiden kuvat", "Aircraft photos"); o += "</h2>";
@@ -419,6 +530,9 @@ void handleSave() {
     else snprintf(c.airlabsKey, sizeof c.airlabsKey, "%s", key.c_str());
   }
 
+  int km = server.arg("log_km").toInt();
+  for (int k : LOG_KMS) if (k == km) c.logKm = km;
+
   if (err.length()) {                             // nothing is saved if anything is wrong
     err = String(TR("Ei tallennettu:<br>", "Not saved:<br>")) + err;
     sendPage(err.c_str(), true);
@@ -478,6 +592,18 @@ void webInit(AppState* state, void* lock) {
   server.on("/save", HTTP_POST, handleSave);
   server.on("/restart", HTTP_POST, handleRestart);
   server.on("/update", HTTP_POST, handleUpdate);
+  server.on("/log", HTTP_GET, [] {                // a month of the logbook, for a spreadsheet
+    if (!allowed()) return;
+    String m = server.arg("m");
+    if (!isMonth(m) || sdStatus.state != SD_OK) { server.send(404, "text/plain", "Not found"); return; }
+    SdLocked l;
+    File f = SD.open(("/skytracker/" + m + ".csv").c_str(), FILE_READ);
+    if (!f) { server.send(404, "text/plain", "Not found"); return; }
+    server.sendHeader("Content-Disposition", "attachment; filename=\"skytracker-" + m + ".csv\"");
+    server.sendHeader("Cache-Control", "no-store");
+    server.streamFile(f, "text/csv; charset=utf-8");
+    f.close();
+  });
   server.onNotFound([] { server.sendHeader("Location", "/"); server.send(302); });
 }
 

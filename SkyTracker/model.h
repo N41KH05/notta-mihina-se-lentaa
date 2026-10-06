@@ -24,6 +24,7 @@ struct Config {
   bool photos = SHOW_PHOTOS;
   char contact[64] = PHOTO_CONTACT;          // for Planespotters (see config.h)
   char airlabsKey[80] = AIRLABS_KEY;         // "" = no timetable times
+  uint16_t logKm = LOG_RADIUS_KM;            // logbook circle around home
 };
 inline Config cfg;
 

@@ -41,7 +41,8 @@ static const int UPDATE_POPUP_Y0 = 125, UPDATE_POPUP_Y1 = 355;   // rows it cove
 enum UiHit { HIT_NONE, HIT_MAP, HIT_ZOOM_IN, HIT_ZOOM_OUT, HIT_HOME, HIT_FOLLOW, HIT_CLOSE,
              HIT_LIST_ROW, HIT_PANEL, HIT_SETTINGS, HIT_PHOTO,
              HIT_PICK_SAVE, HIT_PICK_CANCEL,             // setting home (AppState::pickHome)
-             HIT_SEARCH };                               // the magnifier: find a flight
+             HIT_SEARCH,                                 // the magnifier: find a flight
+             HIT_LOGBOOK };                              // the book under it: the logbook
 UiHit uiHitTest(int x, int y, const AppState& s, int* row);
 const char* listRowHex(int row);                 // plane shown in that panel row last frame
 

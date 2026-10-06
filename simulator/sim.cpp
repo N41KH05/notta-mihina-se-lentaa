@@ -7,8 +7,10 @@
 #include "render.h"
 #include "ui.h"
 #include "demo.h"
+#include "logbook.h"
 #include "sim_photo.h"
 #include <stdio.h>
+#include <math.h>
 
 void* renderAlloc(size_t n) { return malloc(n); }
 
@@ -108,6 +110,7 @@ static void onEvent(const Ev& e) {
       switch (appTap(s, e.x, e.y, nowMs, nullptr)) {
         case HIT_SETTINGS: uiOpenSettings(); break;
         case HIT_SEARCH: uiOpenFlightSearch(); break;
+        case HIT_LOGBOOK: uiOpenLogbook(); break;
         case HIT_PICK_SAVE: appEndPickHome(s, true); homeAsked = true; if (s.demo) demoInit(s, nowMs); break;
         case HIT_PICK_CANCEL: appEndPickHome(s, false); homeAsked = true; break;
         default: break;
@@ -130,6 +133,7 @@ __attribute__((export_name("sim_init"))) void sim_init(uint32_t ms) {
   nowMs = lastPoll = ms;
   demoInit(s, ms);
   for (int i = 0; i < 6; i++) demoStep(s, ms);       // a few breadcrumbs to start with
+  logbookInit();
 }
 
 // n = number of fingers (0-2) with their positions in screen pixels.
@@ -154,6 +158,15 @@ __attribute__((export_name("sim_clock"))) void sim_clock(double epoch) { epochNo
 __attribute__((export_name("sim_frame"))) uint16_t* sim_frame(uint32_t ms, int hour, int minute, int second) {
   nowMs = ms;
   useDarkTheme(darkWanted(epochNow));
+  // The logbook works in local time, and the browser has no time zones: shift the clock by
+  // the page's own offset from UTC (worked out from the local time it passes in).
+  uint32_t localEpoch = 0;
+  if (epochNow > 1.6e9) {
+    int utcMin = (int)fmod(epochNow / 60, 1440), off = ((hour * 60 + minute - utcMin) % 1440 + 1440 + 720) % 1440 - 720;
+    localEpoch = (uint32_t)epochNow + (int)lround(off / 15.0) * 15 * 60;
+    static bool seeded = false;
+    if (!seeded) { seeded = true; logbookDemoSeed(s, localEpoch); }
+  }
   if (uiActive()) {
     uiTick(ms);
     if (uiActive()) { uiRender(*frame, s, ms); return frame->getBuffer(); }
@@ -162,6 +175,7 @@ __attribute__((export_name("sim_frame"))) uint16_t* sim_frame(uint32_t ms, int h
     lastPoll = ms;
     demoStep(s, ms, hour * 60 + minute);
     pathFollow(s);
+    logbookObserve(s.planes, s.nPlanes, cfg.homeLat, cfg.homeLon, 20000, localEpoch);
     s.updatedEpoch = 1;
   }
   Plane* sel = s.selected();

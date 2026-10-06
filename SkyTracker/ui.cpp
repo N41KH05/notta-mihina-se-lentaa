@@ -7,6 +7,8 @@
 #include <algorithm>
 #include "render.h"
 #include "mapdata.h"
+#include "logbook.h"
+#include <time.h>
 
 #define RGB(r, g, b) (uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
 namespace {
@@ -92,7 +94,7 @@ const char* signalWord(int rssi) {
 }
 
 // ---- state ---------------------------------------------------------------------------
-enum Screen { S_NONE, S_SETTINGS, S_WIFI, S_KEYS, S_CONNECT, S_PLACES, S_UPDATE, S_FLIGHTS };
+enum Screen { S_NONE, S_SETTINGS, S_WIFI, S_KEYS, S_CONNECT, S_PLACES, S_UPDATE, S_FLIGHTS, S_LOGBOOK };
 const WifiHooks* hooks = nullptr;
 Screen screen = S_NONE;
 bool firstRun = false;
@@ -597,6 +599,182 @@ void drawFlights(Adafruit_GFX& g, uint32_t now) {
   }
 }
 
+// ---- screens: logbook ---------------------------------------------------------------------
+void groupDigits(char* out, size_t n, unsigned long v) {      // 12 345 / 12,345
+  char tmp[16];
+  snprintf(tmp, sizeof tmp, "%lu", v);
+  int len = strlen(tmp), o = 0;
+  for (int i = 0; i < len && o + 2 < (int)n; i++) {
+    out[o++] = tmp[i];
+    if ((len - i - 1) % 3 == 0 && i < len - 1) out[o++] = thousandsSep();
+  }
+  out[o] = 0;
+}
+void logDist(char* out, size_t n, float km) {
+  float v = units.distKm ? km : km / 1.852f;
+  if (v < 10) snprintf(out, n, "%.1f %s", v, units.distKm ? "km" : "nm");
+  else snprintf(out, n, "%ld %s", lroundf(v), units.distKm ? "km" : "nm");
+  localDecimal(out);
+}
+// "14:05" today, otherwise "3.10. 14:05" / "3 Oct 14:05"
+void logWhen(char* out, size_t n, uint32_t when, uint32_t now) {
+  static const char* MON[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  time_t a = when, b = now;
+  struct tm t, today;
+  localtime_r(&a, &t);
+  localtime_r(&b, &today);
+  if (t.tm_year == today.tm_year && t.tm_yday == today.tm_yday) snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
+  else if (language == LANG_EN) snprintf(out, n, "%d %s %02d:%02d", t.tm_mday, MON[t.tm_mon], t.tm_hour, t.tm_min);
+  else snprintf(out, n, "%d.%d. %02d:%02d", t.tm_mday, t.tm_mon + 1, t.tm_hour, t.tm_min);
+}
+void logDate(char* out, size_t n, uint32_t when) {
+  static const char* MON[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  time_t a = when;
+  struct tm t;
+  localtime_r(&a, &t);
+  if (language == LANG_EN) snprintf(out, n, "%d %s %d", t.tm_mday, MON[t.tm_mon], t.tm_year + 1900);
+  else snprintf(out, n, "%d.%d.%d", t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
+}
+// "FIN1431  ·  Airbus A320neo  ·  2.3 km  ·  14:05", cut to fit maxW
+void passLine(char* out, size_t n, const LogPass& p, uint32_t now, bool withType, const Fnt& f, int maxW) {
+  char lab[16], d[16], w[24], line[140];
+  p.label(lab, sizeof lab);
+  logDist(d, sizeof d, p.km);
+  logWhen(w, sizeof w, p.when, now);
+  if (withType && p.type[0]) snprintf(line, sizeof line, "%s  \x83  %s  \x83  %s  \x83  %s", lab, p.type, d, w);
+  else snprintf(line, sizeof line, "%s  \x83  %s  \x83  %s", lab, d, w);
+  fitCopy(out, n, line, f, maxW);
+}
+
+void drawLogbook(Adafruit_GFX& g) {
+  const LogStats& L = logbookStats();
+  header(g, TR("Lokikirja", "Logbook"), true);
+  char t[160], u[160], r[16];
+  if (units.distKm) snprintf(r, sizeof r, "%u km", (unsigned)cfg.logKm);
+  else snprintf(r, sizeof r, "%ld nm", lroundf(cfg.logKm / 1.852f));
+  snprintf(t, sizeof t, TR("%s kodin ympäriltä  \x83  %s", "Within %s of home  \x83  %s"), r,
+           L.saving ? TR("tallessa SD-kortilla", "saved on the SD card") : TR("ei SD-korttia: muistissa uudelleenkäynnistykseen asti", "no SD card: kept until a restart"));
+  fitCopy(u, sizeof u, t, R14, 470);
+  textR(g, W - 24, 22, u, R14, C_SOFT);
+  if (!L.ready) {
+    card(g, 24, 70, 752, 398, "");
+    bool clock = L.now != 0;
+    textC(g, W / 2, 230, clock ? TR("Luetaan lokikirjaa SD-kortilta\x84", "Reading the logbook from the SD card\x84")
+                               : TR("Odotetaan kellonaikaa (se haetaan Wi-Fin kautta)\x84", "Waiting for the clock (it is set over Wi-Fi)\x84"), B22, C_TEXT);
+    return;
+  }
+
+  // ---- Today
+  const int LX = 24, LW = 372, RX = 404, RW = 372, CY = 70, CH = 258;
+  card(g, LX, CY, LW, CH, TR("TÄNÄÄN", "TODAY"));
+  char num[32];
+  groupDigits(num, sizeof num, L.today);
+  text(g, LX + 20, CY + 34, num, B34, C_TEXT);
+  int nx = LX + 20 + textW(B34, num) + 12;
+  text(g, nx, CY + 38, L.today == 1 ? TR("kone ohitti", "aircraft passed by") : TR("konetta ohitti", "aircraft passed by"), R14, C_TEXT2);
+  if (L.todayNew) snprintf(t, sizeof t, TR("%d ensimmäistä kertaa", "%d for the first time"), L.todayNew);
+  else if (L.open) snprintf(t, sizeof t, TR("%d ympyrän sisällä nyt", "%d inside the circle now"), L.open);
+  else t[0] = 0;
+  text(g, nx, CY + 56, t, B14, L.todayNew ? C_GOOD : C_TEXT2);
+  // passes per hour
+  const int bx = LX + 20, bw = LW - 40, by = CY + 90, bh = 84;
+  int mx = 1, nowHour = -1;
+  for (int h = 0; h < 24; h++) if (L.hours[h] > mx) mx = L.hours[h];
+  if (L.now) { time_t a = L.now; struct tm lt; localtime_r(&a, &lt); nowHour = lt.tm_hour; }
+  g.drawFastHLine(bx, by + bh, bw, C_LINE);
+  for (int h = 0; h < 24; h++) {
+    int x = bx + h * bw / 24 + 2, w = bw / 24 - 4, hh = L.hours[h] * (bh - 4) / mx;
+    if (L.hours[h] && hh < 2) hh = 2;
+    if (hh) g.fillRect(x, by + bh - hh, w, hh, h == nowHour ? C_TEXT : C_PRIMARY);
+    if (h % 6 == 0) {
+      snprintf(num, sizeof num, "%02d", h);
+      text(g, x - 1, by + bh + 5, num, R11, C_TEXT2);
+    }
+  }
+  snprintf(num, sizeof num, TR("%d / t", "%d / h"), mx);
+  if (L.today) textR(g, bx + bw, by - 16, num, R11, C_TEXT2);
+  if (L.today) {
+    passLine(u, sizeof u, L.closest, L.now, true, R14, LW - 40 - textW(R12, TR("Lähin ", "Closest ")));
+    text(g, LX + 20, CY + 200, TR("Lähin", "Closest"), R12, C_TEXT2);
+    text(g, LX + 20 + textW(R12, TR("Lähin ", "Closest ")), CY + 198, u, R14, C_TEXT);
+    if (L.rareType[0]) {
+      char cnt[16];
+      groupDigits(cnt, sizeof cnt, L.rareCount);
+      snprintf(t, sizeof t, L.rareCount == 1 ? TR("%s, ensi kertaa", "%s, its first time") : TR("%s, %s kertaa kaikkiaan", "%s, %s times in all"),
+               typeName(L.rareType), cnt);
+      fitCopy(u, sizeof u, t, R14, LW - 40 - textW(R12, TR("Harvinaisin ", "Rarest ")));
+      text(g, LX + 20, CY + 224, TR("Harvinaisin", "Rarest"), R12, C_TEXT2);
+      text(g, LX + 20 + textW(R12, TR("Harvinaisin ", "Rarest ")), CY + 222, u, R14, C_TEXT);
+    }
+  } else {
+    text(g, LX + 20, CY + 210, TR("Tänään ei vielä yhtään.", "None yet today."), R14, C_TEXT2);
+  }
+
+  // ---- All time
+  card(g, RX, CY, RW, CH, TR("KAIKKIAAN", "ALL TIME"));
+  const unsigned long big[3] = {L.passes, L.aircraft, L.types};
+  const char* cap[3] = {TR("ohitusta", "passes"), TR("eri konetta", "aircraft"), TR("konetyyppiä", "types")};
+  for (int i = 0; i < 3; i++) {
+    int x = RX + 20 + i * 116;
+    groupDigits(num, sizeof num, big[i]);
+    text(g, x, CY + 36, num, B26, C_TEXT);
+    text(g, x, CY + 68, cap[i], R12, C_TEXT2);
+  }
+  if (L.since) {
+    char d[24];
+    logDate(d, sizeof d, L.since);
+    snprintf(t, sizeof t, TR("Ensimmäinen merkintä %s", "First entry %s"), d);
+    text(g, RX + 20, CY + 92, t, R12, C_TEXT2);
+  }
+  text(g, RX + 20, CY + 118, TR("YLEISIMMÄT TYYPIT", "MOST COMMON TYPES"), R12, C_TEXT2);
+  for (int i = 0; i < 3 && L.topTypeN[i]; i++) {
+    int y = CY + 136 + i * 20;
+    fitCopy(u, sizeof u, typeName(L.topType[i]), R14, RW - 120);
+    text(g, RX + 20, y, u, R14, C_TEXT);
+    groupDigits(num, sizeof num, L.topTypeN[i]);
+    textR(g, RX + RW - 20, y, num, B14, C_PRIMARY);
+  }
+  if (L.regularN > 1) {
+    char lab[16], cnt[16];
+    L.regular.label(lab, sizeof lab);
+    groupDigits(cnt, sizeof cnt, L.regularN);
+    if (L.regular.reg[0] && strcmp(L.regular.reg, lab)) snprintf(t, sizeof t, TR("%s (%s), %s kertaa", "%s (%s), %s times"), L.regular.reg, L.regular.type, cnt);
+    else snprintf(t, sizeof t, TR("%s, %s kertaa", "%s, %s times"), lab, cnt);
+    fitCopy(u, sizeof u, t, R14, RW - 40 - textW(R12, TR("Kanta-asiakas ", "Regular ")));
+    text(g, RX + 20, CY + 200, TR("Kanta-asiakas", "Regular"), R12, C_TEXT2);
+    text(g, RX + 20 + textW(R12, TR("Kanta-asiakas ", "Regular ")), CY + 198, u, R14, C_TEXT);
+  }
+  if (L.closestEver.km >= 0) {
+    passLine(u, sizeof u, L.closestEver, L.now, false, R14, RW - 40 - textW(R12, TR("Lähin ikinä ", "Closest ever ")));
+    text(g, RX + 20, CY + 224, TR("Lähin ikinä", "Closest ever"), R12, C_TEXT2);
+    text(g, RX + 20 + textW(R12, TR("Lähin ikinä ", "Closest ever ")), CY + 222, u, R14, C_TEXT);
+  }
+
+  // ---- First-time visitors
+  card(g, 24, 340, 752, 128, TR("UUSIMMAT TULOKKAAT", "LATEST NEWCOMERS"));
+  if (!L.nRecentNew) {
+    snprintf(t, sizeof t, TR("Kaikki %s säteellä kodista ohittavat koneet kirjataan.", "Every aircraft that passes within %s of home is logged."), r);
+    text(g, 44, 372, t, R14, C_TEXT);
+    text(g, 44, 394, TR("Ohitus kirjataan, kun kone on ollut poissa näkyvistä 10 minuuttia.", "A pass is logged once the plane has been out of sight for 10 minutes."), R14, C_TEXT2);
+    text(g, 44, 416, TR("Kone, joka ei ole käynyt ennen, saa kartalla merkinnän UUSI.", "An aircraft that hasn't been by before is marked NEW on the map."), R14, C_TEXT2);
+    return;
+  }
+  for (int i = 0; i < L.nRecentNew && i < 4; i++) {
+    const LogPass& p = L.recentNew[i];
+    int x = 44 + (i % 2) * 366, y = 368 + (i / 2) * 48;
+    char lab[16], d[16], w[24];
+    p.label(lab, sizeof lab);
+    text(g, x, y, lab, B18, C_TEXT);
+    fitCopy(u, sizeof u, p.type[0] ? typeName(p.type) : "", R14, 330 - textW(B18, lab) - 10);
+    text(g, x + textW(B18, lab) + 10, y + 3, u, R14, C_TEXT2);
+    logDist(d, sizeof d, p.km);
+    logWhen(w, sizeof w, p.when, L.now);
+    if (p.reg[0] && strcmp(p.reg, lab)) snprintf(t, sizeof t, "%s  \x83  %s  \x83  %s", w, d, p.reg);
+    else snprintf(t, sizeof t, "%s  \x83  %s", w, d);
+    text(g, x, y + 23, t, R12, C_TEXT2);
+  }
+}
+
 void startConnect() {
   connectResult = 0;
   connectStart = 0;       // stamped on the next tick
@@ -613,6 +791,7 @@ bool uiBusy() { return screen == S_KEYS || screen == S_CONNECT || screen == S_PL
 void uiClose() { screen = S_NONE; }
 void uiOpenSettings() { screen = S_SETTINGS; }
 void uiOpenUpdate() { screen = S_UPDATE; }
+void uiOpenLogbook() { screen = S_LOGBOOK; }
 void uiOpenFlightSearch() {
   kbFor = KB_FLIGHT;
   snprintf(field, sizeof field, "%s", flightQuery);
@@ -800,6 +979,9 @@ void uiTap(int x, int y, uint32_t now, AppState& s) {
         screen = S_NONE;                               // the map, following it
       }
       break;
+    case S_LOGBOOK:
+      if (BACK.hit(x, y)) screen = S_NONE;
+      break;
     case S_CONNECT:
       if (connectResult < 0 && CON_RETRY.hit(x, y)) { if (secure) openKeys(false); else startConnect(); }
       else if (connectResult < 0 && CON_OTHER.hit(x, y)) { screen = S_WIFI; startScan(); }
@@ -851,6 +1033,7 @@ void uiRender(Adafruit_GFX& g, AppState& s, uint32_t now) {
     case S_PLACES: drawPlaces(g, now); break;
     case S_UPDATE: drawUpdate(g); break;
     case S_FLIGHTS: drawFlights(g, now); break;
+    case S_LOGBOOK: drawLogbook(g); break;
     default: break;
   }
 }

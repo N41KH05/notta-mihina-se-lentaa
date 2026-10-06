@@ -6,6 +6,7 @@
 #include "fonts.h"
 #include "mapdata.h"
 #include "qr.h"
+#include "logbook.h"
 
 #define RGB(r, g, b) (uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
 static const uint16_t C_WHITE = 0xFFFF, C_BLACK = 0x0000, C_EMERG = RGB(214, 30, 30);
@@ -421,9 +422,16 @@ static bool areaLabel(Adafruit_GFX& g, float x, float y, const char* s, const Fn
 }
 
 // Plane tags: a small card with the callsign and altitude.
+// "NEW" for an aircraft on its first visit (logbook.h), readable on the tag's background.
+static const char* newWord() { return TR("UUSI", "NEW"); }
+static uint16_t newColor(uint16_t bg) {
+  if (theme == &THEME_DARK) return RGB(104, 226, 136);
+  return bg == theme->bar ? RGB(120, 230, 150) : RGB(20, 140, 70);
+}
 static bool planeTag(Adafruit_GFX& g, float x, float y, const char* l1, const Fnt& f1,
-                     const char* l2, uint16_t bg, uint16_t fg, uint16_t fg2, uint16_t edge, bool force) {
-  int w = textW(f1, l1), w2 = textW(C12, l2);
+                     const char* l2, uint16_t bg, uint16_t fg, uint16_t fg2, uint16_t edge, bool force,
+                     bool fresh = false) {
+  int w = textW(f1, l1), w2 = textW(C12, l2) + (fresh ? 6 + textW(C12, newWord()) : 0);
   if (w2 > w) w = w2;
   w += 8;
   int h = f1.size + C12.size + 6, gap = 13;
@@ -437,6 +445,7 @@ static bool planeTag(Adafruit_GFX& g, float x, float y, const char* l1, const Fn
     if (edge != bg) g.drawRoundRect(ix, iy, w, h, 4, edge);
     text(g, ix + 4, iy + 2, l1, f1, fg);
     text(g, ix + 4, iy + 3 + f1.size, l2, C12, fg2);
+    if (fresh) text(g, ix + 10 + textW(C12, l2), iy + 3 + f1.size, newWord(), C12, newColor(bg));
     return true;
   }
   return false;
@@ -719,8 +728,8 @@ int16_t Canvas::clipTop = -32768, Canvas::clipBottom = 32767;
 static const int BTN = 46, BTN_X = MAP_W - BTN - 10;
 static const int BTN_Y_IN = H - 3 * (BTN + 8) - 2, BTN_Y_OUT = BTN_Y_IN + BTN + 8,
                  BTN_Y_HOME = BTN_Y_OUT + BTN + 8;
-// Flight search: top right of the map.
-static const int SEARCH_Y = 8;
+// Flight search: top right of the map, and the logbook under it.
+static const int SEARCH_Y = 8, LOG_Y = SEARCH_Y + BTN + 8;
 // Settings button: bottom left, just above the scale bar.
 static const int SET_X = 10, SET_Y = H - 40 - BTN - 4;
 // Buttons in the details panel.
@@ -738,6 +747,16 @@ static void mapButton(Adafruit_GFX& g, int y, int kind, int bx = BTN_X) {
     for (int d = -2; d <= 2; d++) {                                 // handle
       g.drawLine(mx + 8 + d, my + 8 - d, mx + 16 + d, my + 16 - d, C_PRIMARY);
       g.drawLine(mx + 8, my + 8 + d, mx + 16, my + 16 + d, C_PRIMARY);
+    }
+    return;
+  }
+  if (kind == 5) {                                                  // open book
+    g.fillRect(cx - 16, cy - 11, 15, 22, C_PRIMARY);
+    g.fillRect(cx + 1, cy - 11, 15, 22, C_PRIMARY);
+    g.fillRect(cx - 17, cy + 11, 34, 3, C_PRIMARY);                 // cover under the pages
+    for (int k = -5; k <= 5; k += 5) {                              // lines of writing
+      g.drawFastHLine(cx - 12, cy + k, 8, C_SURFACE);
+      g.drawFastHLine(cx + 4, cy + k, 8, C_SURFACE);
     }
     return;
   }
@@ -869,6 +888,7 @@ UiHit uiHitTest(int x, int y, const AppState& s, int* row) {
   if (x < MAP_W) {
     if (x >= SET_X && x < SET_X + BTN && y >= SET_Y && y < SET_Y + BTN) return HIT_SETTINGS;
     if (x >= BTN_X && x < BTN_X + BTN && y >= SEARCH_Y && y < SEARCH_Y + BTN) return HIT_SEARCH;
+    if (x >= BTN_X && x < BTN_X + BTN && y >= LOG_Y && y < LOG_Y + BTN) return HIT_LOGBOOK;
     if (x >= BTN_X && x < BTN_X + BTN) {
       if (y >= BTN_Y_IN && y < BTN_Y_IN + BTN) return HIT_ZOOM_IN;
       if (y >= BTN_Y_OUT && y < BTN_Y_OUT + BTN) return HIT_ZOOM_OUT;
@@ -1025,9 +1045,9 @@ static void drawPlanes(Adafruit_GFX& g, AppState& s, int n, uint32_t nowMs) {
       if (p.emergency())
         planeTag(g, sx(p.x), sy(p.y), p.label(), B12, l2, C_EMERG, C_WHITE, C_WHITE, C_EMERG, sel);
       else if (sel)
-        planeTag(g, sx(p.x), sy(p.y), p.label(), B14, l2, C_BAR, C_ON_BAR, theme->onBarSoft, C_BAR, true);
+        planeTag(g, sx(p.x), sy(p.y), p.label(), B14, l2, C_BAR, C_ON_BAR, theme->onBarSoft, C_BAR, true, logbookIsNew(p.hex));
       else
-        planeTag(g, sx(p.x), sy(p.y), p.label(), B12, l2, C_SURFACE, C_TEXT, C_TEXT2, C_BTN_EDGE, false);
+        planeTag(g, sx(p.x), sy(p.y), p.label(), B12, l2, C_SURFACE, C_TEXT, C_TEXT2, C_BTN_EDGE, false, logbookIsNew(p.hex));
     }
 }
 
@@ -1174,7 +1194,15 @@ static void panelList(Adafruit_GFX& g, AppState& s, int n) {
     const Plane& p = s.planes[viewIdx[k]];
     if (k % 2) g.fillRect(PANEL_X + 8, y - 4, x1 + 8 - (PANEL_X + 8), ROW_H, theme->stripe);
     g.fillCircle(x0 + 4, y + 9, 5, altColor(p));
-    text(g, x0 + 16, y, p.label(), B15, C_TEXT);
+    // First visit (logbook.h): a small green "NEW" after the name, or a green name if it won't fit.
+    bool fresh = logbookIsNew(p.hex);
+    int nameEnd = x0 + 16 + textW(B15, p.label()), pw = textW(C12, newWord()) + 8;
+    bool pill = fresh && nameEnd + 5 + pw <= x0 + 118;
+    text(g, x0 + 16, y, p.label(), B15, fresh && !pill ? newColor(C_SURFACE) : C_TEXT);
+    if (pill) {
+      g.fillRoundRect(nameEnd + 5, y + 1, pw, 16, 3, newColor(C_BAR));
+      text(g, nameEnd + 9, y + 2, newWord(), C12, theme == &THEME_DARK ? RGB(10, 12, 13) : C_WHITE);
+    }
     fmtAlt(t, sizeof t, p, true);
     text(g, x0 + 122, y + 1, t, R13, C_TEXT2);
     fmtDist(t, sizeof t, haversineKm(cfg.homeLat, cfg.homeLon, p.lat, p.lon));
@@ -1258,6 +1286,23 @@ static void panelDetails(Adafruit_GFX& g, AppState& s, const Plane& p, const str
   if (textW(*tf, title) > x1 - x0) tf = &B26;
   if (textW(*tf, title) > x1 - x0) tf = &B22;
   text(g, x0, 46, title, *tf, C_PRIMARY);
+  {                                                // the logbook: first visit, or how often seen
+    char seen[32];
+    bool fresh = logbookIsNew(p.hex);
+    int n = logbookSeen(p.hex);
+    if (fresh) snprintf(seen, sizeof seen, "%s", newWord());
+    else if (n == 1) snprintf(seen, sizeof seen, "%s", TR("nähty kerran", "seen once"));
+    else snprintf(seen, sizeof seen, TR("nähty %d kertaa", "seen %d times"), n);
+    int sw = textW(fresh ? B13 : R12, seen) + (fresh ? 10 : 0);
+    if ((fresh || n > 0) && x0 + textW(*tf, title) + 12 + sw <= x1) {
+      if (fresh) {
+        g.fillRoundRect(x1 - sw, 52, sw, 20, 4, newColor(C_BAR));
+        text(g, x1 - sw + 5, 55, seen, B13, theme == &THEME_DARK ? RGB(10, 12, 13) : C_WHITE);
+      } else {
+        textR(g, x1, 56, seen, R12, C_TEXT2);
+      }
+    }
+  }
   if (known && r->airline[0]) {
     if (r->flight[0] && p.cs[0]) snprintf(sub, sizeof sub, "%s  \x83  %s", r->airline, p.cs);
     else snprintf(sub, sizeof sub, "%s", r->airline);
@@ -1378,7 +1423,7 @@ void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm
   // keep tags away from the buttons
   take(BTN_X - 4, BTN_Y_IN - 4, MAP_W, H);
   take(0, SET_Y - 4, 150, H);
-  take(BTN_X - 4, 0, MAP_W, SEARCH_Y + BTN + 4);
+  take(BTN_X - 4, 0, MAP_W, LOG_Y + BTN + 4);
   bool card = photoVisible(s) && !s.pickHome;
   if (s.pickHome) n = 0;                           // no planes while setting home
   if (card) {
@@ -1402,6 +1447,7 @@ void renderOverlay(Adafruit_GFX& g, AppState& s, uint32_t nowMs, const struct tm
   mapButton(g, BTN_Y_HOME, 2);
   if (!s.pickHome) mapButton(g, SET_Y, 3, SET_X);
   if (!s.pickHome) mapButton(g, SEARCH_Y, 4);
+  if (!s.pickHome) mapButton(g, LOG_Y, 5);
   if (s.pickHome) drawPickCross(g);
 
   // panel

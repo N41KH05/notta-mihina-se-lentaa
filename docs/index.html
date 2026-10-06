@@ -35,7 +35,7 @@
       <p class="dialect">Finnish for “So, where's that one flying to?”</p>
       <p class="lede">A 7" touchscreen that shows the planes flying around you. Tap one to see where it's going, how high and fast it is, and a photo of the aircraft. It runs on a single off-the-shelf ESP32 board.</p>
       <div class="btns">
-        <a class="btn primary" href="simulator.html?v=21">Try it in the browser</a>
+        <a class="btn primary" href="simulator.html?v=23">Try it in the browser</a>
         <a class="btn ghost" href="https://github.com/N41KH05/notta-mihina-se-lentaa">Source on GitHub</a>
       </div>
       <ul class="specs">
@@ -101,9 +101,19 @@
   </div>
 
   <div class="feature">
-    <div class="frame phone"><img class="shot" src="img/phone.png" width="780" height="1688" alt="The settings page on a phone" loading="lazy"></div>
+    <div class="frame"><img class="shot" src="img/logbook.png" width="800" height="480" alt="The logbook: today's passes by hour and the all-time counts" loading="lazy"></div>
     <div>
       <p class="num">06</p>
+      <h3>The logbook</h3>
+      <p>Every aircraft that passes near home is counted: how many went by today and when, the closest pass, the rarest type, and all-time numbers. A plane that has never been by before gets a green NEW on the map.</p>
+      <p>With a micro SD card in the back of the board, each month is saved as a file that opens in Excel, and the counts survive restarts.</p>
+    </div>
+  </div>
+
+  <div class="feature">
+    <div class="frame phone"><img class="shot" src="img/phone.png" width="780" height="1688" alt="The settings page on a phone" loading="lazy"></div>
+    <div>
+      <p class="num">07</p>
       <h3>Settings from your phone</h3>
       <p>Wi-Fi is set up on the touchscreen. Everything else can also be changed from a small web page on the device: home, night hours, photos, language and units, and an optional AirLabs key for timetable data. Its address and a QR code are in the device's settings.</p>
       <p>It's meant to run for months without attention: it reconnects after power and router cuts, restarts itself if something hangs, and turns the screen off at night.</p>
