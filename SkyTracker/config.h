@@ -84,6 +84,9 @@
 // and at most AIRLABS_DAILY_MAX a day so the free plan lasts the whole month.
 #define AIRLABS_KEY         ""
 #define AIRLABS_DAILY_MAX   30
+// A quick restart every night at 04:00. Off: on some start-ups the screen comes up with
+// lines that only a power cut clears, so the device restarts only when it must.
+#define DAILY_RESTART       false
 #define TIMES_REFRESH_MIN   20
 
 #define TRAIL_POINTS    40         // breadcrumbs per plane (40 x 4 s = under 3 min)

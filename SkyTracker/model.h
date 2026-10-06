@@ -54,6 +54,10 @@ struct SdStatus {
 };
 inline SdStatus sdStatus;
 
+// Screen test (tap the STATUS heading in Settings): a still picture and nothing else drawn
+// or downloaded until this millis(), to tell a screen fault from a busy memory bus.
+inline volatile uint32_t screenTestUntil = 0;
+
 enum DarkMode : uint8_t { DARK_OFF = 0, DARK_ON = 1, DARK_AUTO = 2 };
 
 // The sun's height above the horizon in degrees at a place and time (Unix seconds).

@@ -61,6 +61,7 @@ void fetchLoop(void*) {
     esp_task_wdt_reset();
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(pollSeconds(state.nPlanes) * 1000));
     esp_task_wdt_reset();
+    if ((int32_t)(millis() - screenTestUntil) < 0) continue;   // screen test: the bus stays quiet
     updateTick();                      // new firmware? (also at night, with the screen off)
     sdTick();
     if (state.night) continue;
@@ -696,7 +697,7 @@ void healthCheck(bool idleLong) {
   if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < 20000) restartNow("memory running low", isNightHour());
   // Once a day at 04:00-04:10, a quick restart clears anything that has slowly built up.
   struct tm t;
-  if (uptimeMinutes() > 20 * 60 && getLocalTime(&t, 0) && t.tm_hour == 4 && t.tm_min < 10)
+  if (DAILY_RESTART && uptimeMinutes() > 20 * 60 && getLocalTime(&t, 0) && t.tm_hour == 4 && t.tm_min < 10)
     restartNow("daily restart", isNightHour());
 }
 
@@ -826,10 +827,41 @@ void setup() {
 // ---------------------------------------------------------------------------
 //  Main loop: handle touches, redraw a few times a second
 // ---------------------------------------------------------------------------
+// Screen test: draw a still pattern into both buffers once, then nothing at all until it
+// ends. If lines still show, the memory bus is not the cause (nothing else is using it).
+static bool screenTest() {
+  static bool shown = false;
+  if ((int32_t)(millis() - screenTestUntil) >= 0) {
+    if (shown) { shown = false; baseStale = true; Ev e; while (xQueueReceive(events, &e, 0)) {} }
+    return false;
+  }
+  if (!shown) {
+    for (int k = 0; k < 2; k++) {
+      uint16_t* f = boardBackBuffer();
+      canvas.use(f);
+      canvas.fillScreen(0x0000);
+      static const uint16_t bars[] = {0xF800, 0x07E0, 0x001F, 0xFFE0, 0xF81F, 0x07FF, 0xFFFF, 0x8410};
+      for (int i = 0; i < 8; i++) canvas.fillRect(i * 100, 0, 100, 120, bars[i]);
+      for (int x = 0; x < SCREEN_W; x += 20) canvas.drawFastVLine(x, 140, 200, 0xFFFF);
+      for (int y = 140; y < 340; y += 20) canvas.drawFastHLine(0, y, SCREEN_W, 0xFFFF);
+      text(canvas, 24, 370, TR("NÄYTTÖTESTI: mitään ei piirretä 20 sekuntiin", "SCREEN TEST: nothing is drawn for 20 seconds"), B22, 0xFFFF);
+      text(canvas, 24, 410, TR("Jos viivoja näkyy yhä, vika on näytössä, ei muistiväylässä.", "Lines still showing now: the fault is in the screen, not the memory bus."), R14, 0xC618);
+      boardPresent();
+    }
+    shown = true;
+    Serial.println("Screen test: nothing drawn for 20 s");
+  }
+  Ev e;
+  while (xQueueReceive(events, &e, 0)) {}          // ignore touches meanwhile
+  delay(50);
+  return true;
+}
+
 void loop() {
   static uint32_t lastFrame = 0;
   webLoop();                                       // the phone settings page
   confirmFirmware();
+  if (screenTest()) return;
   // The fetch task is writing new firmware: an "update in progress" popup over the
   // screen as it was (dimmed). The cached map buffer holds that dimmed copy meanwhile.
   static bool popupBack = false;
