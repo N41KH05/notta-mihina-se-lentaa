@@ -6,12 +6,12 @@ The name is Finnish, roughly "so, where's that one flying to?". The screen is in
 
 You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa/simulator.html?v=20) before buying anything. That page runs the firmware's own drawing and touch code compiled to WebAssembly, with made-up traffic.
 
-<p align="center"><img src="docs/img/hero.png" width="720" alt="The display with a selected flight from Stockholm to Oulu"></p>
+<p align="center"><img src="docs/img/hero.png" width="720" alt="The display in its case, showing a flight from Stockholm to Oulu in dark mode"></p>
 
 <p align="center">
 <img src="docs/img/map.png" width="400" alt="Map with planes around Helsinki">
 <img src="docs/img/zoomout.png" width="400" alt="Zoomed out over the Baltic Sea">
-<img src="docs/img/dark.png" width="400" alt="Dark mode">
+<img src="docs/img/selected.png" width="400" alt="A selected flight with its route and photo">
 </p>
 
 ## What it does
