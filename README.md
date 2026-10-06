@@ -29,7 +29,7 @@ You can [try it in the browser](https://n41kh05.github.io/notta-mihina-se-lentaa
 You need the board (the touch version), a USB-C cable and a 5 V / 1 A phone charger. No soldering.
 
 1. Install the Arduino IDE 2 and the ESP32 board package 3.x.
-2. Install the libraries Adafruit GFX, ArduinoJson (v7) and JPEGDEC.
+2. Install the libraries Adafruit GFX and ArduinoJson (v7).
 3. Open `SkyTracker/SkyTracker.ino` and set the board options: ESP32S3 Dev Module, 16 MB flash, OPI PSRAM, custom partition scheme, USB CDC on boot enabled.
 4. Upload, then pick your Wi-Fi and home on the screen.
 
@@ -51,7 +51,7 @@ There's a 3D-printable case in [`case/`](case/). It's closed on all sides, has t
   - `ui.cpp`: touch gestures and the full-screen menus (settings, Wi-Fi, home)
   - `net.cpp`: fetching flight data, routes and photos; `web.cpp`: the phone settings page
   - `demo.cpp`: simulated traffic
-  - generated or third-party: `mapdata.cpp` (tools/make_map.py), `fonts.h` (tools/make_fonts.py), `qr.c`
+  - generated or third-party: `mapdata.cpp` (tools/make_map.py), `fonts.h` (tools/make_fonts.py), `qr.c`, `stb_image.h`
 - `simulator/`: builds the browser version (`docs/sim.wasm`).
 - `case/`: the enclosure (OpenSCAD source and STLs).
 - `tools/`: scripts that generate the map data and fonts.
@@ -65,4 +65,4 @@ The position services are free for personal, non-commercial use. The firmware ke
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Bundled third-party code: the QR code generator in `qr.c` by Richard Moore (MIT), fonts generated from DejaVu Sans (Bitstream Vera license), and the map data (public domain). The firmware also needs ArduinoJson (MIT), JPEGDEC (Apache 2.0) and Adafruit GFX (BSD); Adafruit GFX is compiled into the simulator.
+MIT, see [LICENSE](LICENSE). Bundled third-party code: the QR code generator in `qr.c` by Richard Moore (MIT), the JPEG decoder in `stb_image.h` by Sean Barrett (public domain / MIT), fonts generated from DejaVu Sans (Bitstream Vera license), and the map data (public domain). The firmware also needs ArduinoJson (MIT) and Adafruit GFX (BSD); Adafruit GFX is compiled into the simulator.

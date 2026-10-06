@@ -1,7 +1,6 @@
 // Live data: plane positions from adsb.fi / airplanes.live / adsb.lol,
 // flight routes from adsbdb.com.
 #include "net.h"
-#include <new>
 #include <esp_task_wdt.h>
 #include <Arduino.h>
 #include <WiFi.h>
@@ -10,7 +9,6 @@
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
-#include <JPEGDEC.h>
 #include <miniz.h>                         // the ROM's inflater (for gzip'ed track histories)
 #include <ctype.h>
 #include <math.h>
@@ -546,15 +544,43 @@ void netLookupTimes(AppState& s, void* lock) {
 //  User-Agent, and never store the images (they only live in memory here).
 // ---------------------------------------------------------------------------
 namespace {
-uint16_t* decoded = nullptr;
-int decW = 0, decH = 0;
+// JPEG decoding with stb_image (public domain, stb_image.h): handles both baseline and
+// progressive JPEGs, which photo sites often serve. Its buffers go to PSRAM.
+#define STBI_ONLY_JPEG
+#define STBI_NO_STDIO
+#define STBI_NO_LINEAR
+#define STBI_NO_HDR
+#define STBI_NO_FAILURE_STRINGS
+#define STBI_ASSERT(x)
+#define STBI_MALLOC(n) heap_caps_malloc(n, MALLOC_CAP_SPIRAM)
+#define STBI_REALLOC(p, n) heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM)
+#define STBI_FREE(p) heap_caps_free(p)
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+#pragma GCC diagnostic ignored "-Wmisleading-indentation"
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+#include "stb_image.h"
+#pragma GCC diagnostic pop
 
-int jpegDraw(JPEGDRAW* d) {
-  int w = d->iWidthUsed > 0 ? d->iWidthUsed : d->iWidth;
-  if (d->x + w > decW) w = decW - d->x;
-  for (int y = 0; y < d->iHeight && d->y + y < decH; y++)
-    memcpy(decoded + (d->y + y) * decW + d->x, d->pPixels + y * d->iWidth, w * 2);
-  return 1;
+// JPEG -> RGB565 pixels at the picture's own size, in a new PSRAM buffer (free it with
+// heap_caps_free). Returns nullptr if it can't be read or is unreasonably big.
+uint16_t* decodeJpeg(const uint8_t* jpg, size_t len, int* w, int* h) {
+  int iw, ih, comp;
+  if (!stbi_info_from_memory(jpg, (int)len, &iw, &ih, &comp) || iw <= 0 || ih <= 0 || iw * ih > 1600 * 1200)
+    return nullptr;
+  uint8_t* rgb = stbi_load_from_memory(jpg, (int)len, &iw, &ih, &comp, 3);
+  if (!rgb) return nullptr;
+  uint16_t* px = (uint16_t*)rgb;            // convert in place: 2 bytes out for every 3 read
+  for (int i = 0, n = iw * ih; i < n; i++) {
+    const uint8_t* c = rgb + i * 3;
+    px[i] = (uint16_t)(((c[0] & 0xF8) << 8) | ((c[1] & 0xFC) << 3) | (c[2] >> 3));
+  }
+  *w = iw;
+  *h = ih;
+  return px;
 }
 
 // Scale the decoded picture to fill PHOTO_W x PHOTO_H, cropping the edges (bilinear).
@@ -691,34 +717,16 @@ void netFetchPhoto(void* lock) {
     }
   }
 
-  // 2. Download and decode the picture (baseline JPEG), then scale it to the card.
+  // 2. Download and decode the picture, then scale it to the card.
   bool ok = false;
   uint8_t* jpg = nullptr;
   size_t len = src[0] ? download(src, &jpg, 400000) : 0;
-  // The decoder is an ~18 KB object: far too big for this task's stack, so it lives in PSRAM.
-  static JPEGDEC* dec = nullptr;
-  if (!dec) {
-    void* mem = heap_caps_malloc(sizeof(JPEGDEC), MALLOC_CAP_SPIRAM);
-    if (mem) dec = new (mem) JPEGDEC();
-  }
-  if (len && dec) {
-    JPEGDEC& jpeg = *dec;
-    if (jpeg.openRAM(jpg, len, jpegDraw)) {
-      decW = jpeg.getWidth();
-      decH = jpeg.getHeight();
-      decoded = decW * decH <= 800 * 600 ?
-          (uint16_t*)heap_caps_malloc(decW * decH * 2, MALLOC_CAP_SPIRAM) : nullptr;
-      if (decoded) {
-        jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
-        if (jpeg.decode(0, 0, 0)) {
-          coverResize(decoded, decW, decH, ready);
-          ok = true;
-        }
-        heap_caps_free(decoded);
-        decoded = nullptr;
-      }
-      jpeg.close();
-    }
+  int w = 0, h = 0;
+  uint16_t* px = len ? decodeJpeg(jpg, len, &w, &h) : nullptr;
+  if (px) {
+    coverResize(px, w, h, ready);
+    heap_caps_free(px);
+    ok = true;
   }
   heap_caps_free(jpg);
 
@@ -735,7 +743,8 @@ void netFetchPhoto(void* lock) {
     }
   }
   UNLOCK(lock);
-  Serial.printf("Photo for %s: %s\n", hex, ok ? "shown" : found ? "could not be shown" : "none");
+  Serial.printf("Photo for %s: %s (%u bytes, %dx%d)\n", hex, ok ? "shown" : found ? "could not be shown" : "none",
+                (unsigned)len, w, h);
 }
 
 // ---------------------------------------------------------------------------

@@ -17,7 +17,6 @@ How to build, set up and use the display. Most settings can be changed on the de
 4. In Tools → Manage Libraries, install:
    - Adafruit GFX Library (accept its dependencies)
    - ArduinoJson by Benoit Blanchon, version 7
-   - JPEGDEC by Larry Bank (for the photos)
 5. Open `SkyTracker/SkyTracker.ino`. You don't have to edit anything: Wi-Fi and home are set on the screen. If you'd rather pre-fill them, they're in `config.h`.
 6. In the Tools menu:
    - Board: ESP32S3 Dev Module
@@ -134,7 +133,6 @@ Open Tools → Serial Monitor at 115200 baud (on the USB port) to see what it's 
 - **The picture jitters, flickers or shifts sideways**, especially while dragging or zooming. The screen has no memory of its own, so the ESP32 streams the picture to it continuously from PSRAM, and heavy drawing can make that stream late. Lower `LCD_PCLK_MHZ` in `config.h` (14 by default; try 12) and upload again. If it still happens, please open an issue.
 - **Touch doesn't work.** The log should show "Touch controller GT911 at 0x5D" (or 0x14). If not, press RESET.
 - **"No flight data".** The panel lists each service and what went wrong. "Wi-Fi not connected" or "no connection to server" is your network; "HTTP 403" means that service refused, and the next one is tried.
-- **"JPEGDEC.h: No such file".** Install the JPEGDEC library.
 - **No photos.** The log has a "Photo for ..." line per plane. Check that the contact email is set. Many small and military planes just don't have a photo.
 - **"Sketch too big".** The partition scheme must be Custom.
 
@@ -153,4 +151,4 @@ Without an argument it looks in `~/Documents/Arduino/libraries`.
 
 ## Credits
 
-Positions from adsb.fi, airplanes.live and adsb.lol; flight paths from adsb.lol; routes and aircraft owners from adsbdb; address search from Nominatim (© OpenStreetMap contributors); timetables from AirLabs; photos from Planespotters.net and its photographers; map from Natural Earth; airports from OurAirports. JPEGDEC by Larry Bank, QRCode by Richard Moore, DejaVu Sans font. The board's pins and timings follow Waveshare's definition in ESP32_Display_Panel.
+Positions from adsb.fi, airplanes.live and adsb.lol; flight paths from adsb.lol; routes and aircraft owners from adsbdb; address search from Nominatim (© OpenStreetMap contributors); timetables from AirLabs; photos from Planespotters.net and its photographers; map from Natural Earth; airports from OurAirports. stb_image by Sean Barrett, QRCode by Richard Moore, DejaVu Sans font. The board's pins and timings follow Waveshare's definition in ESP32_Display_Panel.
