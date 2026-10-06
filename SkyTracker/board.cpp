@@ -2,6 +2,7 @@
 // Pin numbers and timings are from Waveshare's own board definition
 // (ESP32_Display_Panel: BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_7).
 #include "board.h"
+#include "config.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <esp_lcd_panel_rgb.h>
@@ -97,7 +98,7 @@ bool boardInit() {
   // (the bounce buffers stop the picture shaking while Wi-Fi is busy).
   esp_lcd_rgb_panel_config_t cfg = {};
   cfg.clk_src = LCD_CLK_SRC_DEFAULT;
-  cfg.timings.pclk_hz = 16 * 1000 * 1000;
+  cfg.timings.pclk_hz = LCD_PCLK_MHZ * 1000 * 1000;
   cfg.timings.h_res = W;
   cfg.timings.v_res = H;
   cfg.timings.hsync_pulse_width = 4;
@@ -110,7 +111,7 @@ bool boardInit() {
   cfg.data_width = 16;
   cfg.bits_per_pixel = 16;
   cfg.num_fbs = 2;
-  cfg.bounce_buffer_size_px = W * 10;
+  cfg.bounce_buffer_size_px = W * 16;     // more slack while the CPU is busy with PSRAM
   cfg.dma_burst_size = 64;
   cfg.hsync_gpio_num = 46;
   cfg.vsync_gpio_num = 3;
@@ -148,6 +149,10 @@ void boardPresent() {
   xSemaphoreTake(frameDone, pdMS_TO_TICKS(60));
   back ^= 1;
 }
+
+// If the LCD's data stream fell behind (PSRAM busy), the picture shifts sideways and
+// stays that way. Restarting the stream (it waits for the end of the frame) puts it back.
+void boardResync() { esp_lcd_rgb_panel_restart(panel); }
 
 void boardBacklight(bool on) {
   xSemaphoreTake(i2cLock, portMAX_DELAY);

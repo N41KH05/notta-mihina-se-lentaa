@@ -96,22 +96,30 @@ float baseCx = NAN, baseCy = NAN;
 int baseZoom = -1;
 bool baseStale = true;
 
-// While dragging, slide the cached map instead of redrawing it (much faster);
-// it is redrawn properly when the finger lifts.
+// While dragging, the cached map is drawn shifted instead of redrawn (much faster);
+// it is redrawn properly when the finger lifts. The shift is applied while copying the
+// map into the frame, so dragging costs no more memory traffic than a normal frame.
+int baseOffX = 0, baseOffY = 0;
 void shiftBase(int dx, int dy) {
-  if (abs(dx) >= MAP_W || abs(dy) >= SCREEN_H) { baseStale = true; return; }
-  static uint16_t row[SCREEN_W];
+  baseOffX += dx;
+  baseOffY += dy;
+  if (abs(baseOffX) >= MAP_W || abs(baseOffY) >= SCREEN_H) baseStale = true;
+}
+static void fill16(uint16_t* p, int n, uint16_t c) { while (n--) *p++ = c; }
+// Copy the cached background into a frame, with the map part moved by the drag offset.
+static void composeBase(uint16_t* dst) {
+  const int ox = baseOffX, oy = baseOffY;
+  if (!ox && !oy) { memcpy(dst, baseBuf, SCREEN_W * SCREEN_H * 2); return; }
   const uint16_t sea = baseBuf[0];   // corner pixel is (nearly always) sea colour
-  int y0 = dy > 0 ? SCREEN_H - 1 : 0, y1 = dy > 0 ? -1 : SCREEN_H, step = dy > 0 ? -1 : 1;
-  for (int y = y0; y != y1; y += step) {
-    int src = y - dy;
-    uint16_t* dst = baseBuf + y * SCREEN_W;
-    if (src < 0 || src >= SCREEN_H) { for (int x = 0; x < MAP_W; x++) dst[x] = sea; continue; }
-    memcpy(row, baseBuf + src * SCREEN_W, MAP_W * 2);
-    for (int x = 0; x < MAP_W; x++) {
-      int sxp = x - dx;
-      dst[x] = (sxp >= 0 && sxp < MAP_W) ? row[sxp] : sea;
-    }
+  int x0 = ox > 0 ? ox : 0, x1 = ox < 0 ? MAP_W + ox : MAP_W;   // columns the old map covers
+  for (int y = 0; y < SCREEN_H; y++) {
+    uint16_t* d = dst + y * SCREEN_W;
+    memcpy(d + MAP_W, baseBuf + y * SCREEN_W + MAP_W, (SCREEN_W - MAP_W) * 2);   // side panel
+    int sy = y - oy;
+    if (sy < 0 || sy >= SCREEN_H) { fill16(d, MAP_W, sea); continue; }
+    fill16(d, x0, sea);
+    memcpy(d + x0, baseBuf + sy * SCREEN_W + x0 - ox, (x1 - x0) * 2);
+    fill16(d + x1, MAP_W - x1, sea);
   }
 }
 
@@ -122,6 +130,7 @@ static void applyTheme() {
 }
 
 void drawFrame() {
+  bool resync = false;
   struct tm now, upd;
   bool haveTime = getLocalTime(&now, 0);
   xSemaphoreTake(lock, portMAX_DELAY);
@@ -130,15 +139,22 @@ void drawFrame() {
       fabsf(state.cy - baseCy) > 0.5f * metresPerPx(state.zoom)) {
     renderBase(baseCanvas, state.cx, state.cy, state.zoom);
     baseCx = state.cx; baseCy = state.cy; baseZoom = state.zoom; baseStale = false;
+    baseOffX = baseOffY = 0;
+    resync = true;                       // heavy PSRAM work: the LCD may have slipped
   }
   uint16_t* fbuf = boardBackBuffer();
-  memcpy(fbuf, baseBuf, SCREEN_W * SCREEN_H * 2);
+  composeBase(fbuf);
   canvas.use(fbuf);
   time_t u = state.updatedEpoch;
   localtime_r(&u, &upd);
   renderOverlay(canvas, state, millis(), haveTime ? &now : nullptr, u > 100000 ? &upd : nullptr);
   xSemaphoreGive(lock);
   boardPresent();
+  static uint32_t lastResync = 0;
+  if (resync && millis() - lastResync > 500) {   // not every frame when following a plane
+    lastResync = millis();
+    boardResync();
+  }
 }
 
 void message(const char* big, const char* small) {
@@ -712,7 +728,13 @@ void loop() {
   }
   xSemaphoreGive(lock);
 
-  if (got || millis() - lastFrame >= FRAME_MS) {
+  // Redraw soon after a touch (but not more than 25 times a second, so the LCD's own
+  // data stream keeps up), otherwise a few times a second for the gliding planes.
+  static bool pending = false;
+  pending |= got;
+  uint32_t since = millis() - lastFrame;
+  if ((pending && since >= FRAME_MS_TOUCH) || since >= FRAME_MS) {
+    pending = false;
     lastFrame = millis();
     drawFrame();
   }

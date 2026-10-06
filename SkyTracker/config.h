@@ -59,6 +59,10 @@
 }
 #define POLL_SECONDS    4          // fresh positions this often (services allow 1/s)
 #define FRAME_MS        200        // planes glide between fetches: redraw this often
+#define FRAME_MS_TOUCH  40         // while a finger moves the map: at most 25 frames a second
+// The screen has no memory of its own: the ESP32 sends it the whole picture ~35 times a
+// second from PSRAM. Lower this (e.g. 12) if the picture shifts sideways or flickers.
+#define LCD_PCLK_MHZ    14
 #define HIDE_ON_GROUND  true
 
 // ---- Plane photos (Planespotters.net) -----------------------------------------------

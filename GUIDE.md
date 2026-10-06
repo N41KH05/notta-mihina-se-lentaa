@@ -131,7 +131,7 @@ Open Tools → Serial Monitor at 115200 baud (on the USB port) to see what it's 
 
 - **Settings page won't open.** The phone has to be on the same Wi-Fi, not mobile data or a guest network. The address can change after a router restart; check it in Settings.
 - **Black screen, and "LCD init failed" or "No PSRAM" in the log.** PSRAM must be set to OPI PSRAM.
-- **The picture jitters or shifts sideways.** This can happen when Wi-Fi is busy. The code already uses bounce buffers, which normally fixes it. If you still see it, please open an issue.
+- **The picture jitters, flickers or shifts sideways**, especially while dragging or zooming. The screen has no memory of its own, so the ESP32 streams the picture to it continuously from PSRAM, and heavy drawing can make that stream late. Lower `LCD_PCLK_MHZ` in `config.h` (14 by default; try 12) and upload again. If it still happens, please open an issue.
 - **Touch doesn't work.** The log should show "Touch controller GT911 at 0x5D" (or 0x14). If not, press RESET.
 - **"No flight data".** The panel lists each service and what went wrong. "Wi-Fi not connected" or "no connection to server" is your network; "HTTP 403" means that service refused, and the next one is tried.
 - **"JPEGDEC.h: No such file".** Install the JPEGDEC library.
