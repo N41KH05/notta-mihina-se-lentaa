@@ -6,6 +6,8 @@
 #include "config.h"
 #include <Arduino.h>
 #include <Wire.h>
+#include <SPI.h>
+#include <SD.h>
 #include <esp_lcd_panel_rgb.h>
 #include <esp_lcd_panel_ops.h>
 #include <driver/gpio.h>
@@ -68,6 +70,20 @@ bool IRAM_ATTR onFrameDone(esp_lcd_panel_handle_t, const esp_lcd_rgb_panel_event
 }
 
 }  // namespace
+
+bool boardSdBegin() {
+  // The card's chip select is on the expander, too slow to switch for every transfer.
+  // The card is alone on its bus, so: wake it with CS high, then keep CS low for good
+  // and give the SD library a pin number that doesn't exist (255) to "switch".
+  const int SD_SCK = 12, SD_MISO = 13, SD_MOSI = 11;
+  exSet(EXIO_SD_CS, true);
+  SPI.begin(SD_SCK, SD_MISO, SD_MOSI, -1);
+  SPI.beginTransaction(SPISettings(400000, MSBFIRST, SPI_MODE0));
+  for (int i = 0; i < 10; i++) SPI.transfer(0xFF);          // 80 clocks: the card starts up
+  SPI.endTransaction();
+  exSet(EXIO_SD_CS, false);
+  return SD.begin(255, SPI, 10000000, "/sd", 4);
+}
 
 void boardHardRestart() {
   if (i2cLock) xSemaphoreTake(i2cLock, pdMS_TO_TICKS(200));

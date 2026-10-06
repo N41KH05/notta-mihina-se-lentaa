@@ -195,7 +195,16 @@ void sendPage(const char* msg, bool error) {
   if (up >= 1440) snprintf(b, sizeof b, TR("%lu pv %lu t", "%lu d %lu h"), (unsigned long)(up / 1440), (unsigned long)(up / 60 % 24));
   else snprintf(b, sizeof b, TR("%lu t %lu min", "%lu h %lu min"), (unsigned long)(up / 60), (unsigned long)(up % 60));
   o += "<dt>"; o += TR("Käynnissä", "Uptime"); o += "</dt><dd>"; o += b; o += "</dd>";
-  o += "<dt>"; o += TR("Käynnistyi", "Last start"); o += "</dt><dd>"; o += resetReasonText(); o += "</dd></dl></section>";
+  o += "<dt>"; o += TR("Käynnistyi", "Last start"); o += "</dt><dd>"; o += resetReasonText(); o += "</dd>";
+  o += "<dt>"; o += TR("SD-kortti", "SD card"); o += "</dt><dd>";
+  if (sdStatus.state == SD_OK) {
+    snprintf(b, sizeof b, TR("toimii, %u / %u Mt vapaana, %u kirjoitusta", "working, %u of %u MB free, %u writes"),
+             (unsigned)sdStatus.freeMB, (unsigned)sdStatus.totalMB, (unsigned)sdStatus.writes);
+    o += b;
+  } else if (sdStatus.state == SD_FAILED) {
+    o += "<span style='color:var(--bad)'>"; esc(o, sdStatus.error); o += "</span>";
+  } else o += TR("ei korttia", "no card");
+  o += "</dd></dl></section>";
 
   o += "<form method=post action=/save><input type=hidden name=t value=";
   o += formToken;

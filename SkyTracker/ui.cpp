@@ -216,9 +216,19 @@ void drawSettings(Adafruit_GFX& g, AppState& s) {
   }
 
   // Live data + home
-  char cardLabel[48];
+  char cardLabel[96];
   if (FW_BUILD > 0) snprintf(cardLabel, sizeof cardLabel, TR("TILA  \x83  OHJELMISTO BUILD %d", "STATUS  \x83  SOFTWARE BUILD %d"), FW_BUILD);
   else snprintf(cardLabel, sizeof cardLabel, "%s", TR("TILA  \x83  OMA KÄÄNNÖS", "STATUS  \x83  OWN BUILD"));
+  {                                                       // and the SD card
+    size_t k = strlen(cardLabel);
+    if (sdStatus.state == SD_OK) {
+      char sz[16];
+      if (sdStatus.freeMB >= 1024) snprintf(sz, sizeof sz, "%.1f GB", sdStatus.freeMB / 1024.0f);
+      else snprintf(sz, sizeof sz, "%u MB", (unsigned)sdStatus.freeMB);
+      snprintf(cardLabel + k, sizeof cardLabel - k, TR("  \x83  SD-KORTTI OK, %s VAPAANA", "  \x83  SD CARD OK, %s FREE"), sz);
+    } else if (sdStatus.state == SD_FAILED) snprintf(cardLabel + k, sizeof cardLabel - k, "%s", TR("  \x83  SD-KORTTI: VIRHE", "  \x83  SD CARD: ERROR"));
+    else snprintf(cardLabel + k, sizeof cardLabel - k, "%s", TR("  \x83  EI SD-KORTTIA", "  \x83  NO SD CARD"));
+  }
   card(g, 24, 330, 752, 130, cardLabel);
   if (s.demo) snprintf(t, sizeof t, "%s", TR("Demotila: keksittyjä koneita kodin lähellä", "Demo mode: made-up aircraft near home"));
   else if (s.apiOk && s.updatedEpoch) snprintf(t, sizeof t, TR("Koneet tulevat palvelusta %s", "Aircraft data from %s"), s.source);

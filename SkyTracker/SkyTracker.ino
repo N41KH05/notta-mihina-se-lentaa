@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Preferences.h>
+#include <SD.h>
 #include <time.h>
 #include <Adafruit_GFX.h>
 #include <freertos/FreeRTOS.h>
@@ -53,6 +54,7 @@ void touchTask(void*) {
 //  Background fetching (other CPU core)
 // ---------------------------------------------------------------------------
 void updateTick();
+void sdTick();
 void fetchLoop(void*) {
   esp_task_wdt_add(nullptr);           // restart the board if this task ever hangs
   for (;;) {
@@ -60,6 +62,7 @@ void fetchLoop(void*) {
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(pollSeconds(state.nPlanes) * 1000));
     esp_task_wdt_reset();
     updateTick();                      // new firmware? (also at night, with the screen off)
+    sdTick();
     if (state.night) continue;
     if (state.demo) {
       xSemaphoreTake(lock, portMAX_DELAY);
@@ -680,6 +683,58 @@ void healthCheck(bool idleLong) {
 }
 
 // ---------------------------------------------------------------------------
+//  Micro SD card: a check at start-up, then a small write once a minute
+// ---------------------------------------------------------------------------
+static void sdFail(const char* what) {
+  sdStatus.state = SD_FAILED;
+  snprintf(sdStatus.error, sizeof sdStatus.error, "%s", what);
+  Serial.printf("SD card: %s\n", what);
+}
+static void sdSpace() {
+  sdStatus.totalMB = (uint32_t)(SD.totalBytes() >> 20);
+  uint64_t used = SD.usedBytes();
+  sdStatus.freeMB = sdStatus.totalMB - (uint32_t)(used >> 20);
+}
+// Write a line and read it back. True if what came back matches.
+static bool sdWriteCheck(const char* path, const char* line) {
+  File f = SD.open(path, FILE_WRITE);
+  if (!f) return false;
+  size_t n = f.print(line);
+  f.close();
+  if (n != strlen(line)) return false;
+  f = SD.open(path, FILE_READ);
+  if (!f) return false;
+  char back[96] = "";
+  size_t got = f.readBytes(back, sizeof back - 1);
+  f.close();
+  back[got] = 0;
+  return !strcmp(back, line);
+}
+void sdCheck() {
+  if (!boardSdBegin()) { sdStatus.state = SD_NONE; Serial.println("SD card: none (or not readable)"); return; }
+  SD.mkdir("/skytracker");
+  char line[96];
+  snprintf(line, sizeof line, "SkyTracker build %d started\n", FW_BUILD);
+  if (!sdWriteCheck("/skytracker/check.txt", line)) { sdFail(TR("kirjoitus ei onnistunut", "writing failed")); return; }
+  sdStatus.state = SD_OK;
+  sdStatus.writes = 1;
+  sdSpace();
+  Serial.printf("SD card: OK, %u MB, %u MB free\n", (unsigned)sdStatus.totalMB, (unsigned)sdStatus.freeMB);
+}
+// Runs in the fetch task. Keeps the card in use, so problems (or screen lines while
+// it is written) show up now rather than once the logbook depends on it.
+void sdTick() {
+  static uint32_t next = 60000;
+  if (sdStatus.state != SD_OK || (int32_t)(millis() - next) < 0) return;
+  next = millis() + 60000;
+  char line[96];
+  snprintf(line, sizeof line, "build %d, up %lu min, %d planes\n", FW_BUILD, (unsigned long)(millis() / 60000), state.nPlanes);
+  if (!sdWriteCheck("/skytracker/alive.txt", line)) { sdFail(TR("kirjoitus epäonnistui käytössä", "a write failed while running")); return; }
+  sdStatus.writes++;
+  if (sdStatus.writes % 30 == 0) sdSpace();
+}
+
+// ---------------------------------------------------------------------------
 //  Setup
 // ---------------------------------------------------------------------------
 
@@ -708,6 +763,7 @@ void setup() {
   baseBuf = (uint16_t*)heap_caps_malloc(SCREEN_W * SCREEN_H * 2, MALLOC_CAP_SPIRAM);
   baseCanvas.use(baseBuf);
   if (!boardInit()) { for (;;) delay(1000); }
+  sdCheck();
   message(APP_NAME, TR("Käynnistyy…", "Starting…"));
   quietBoot = quiet;
   if (quiet) {                         // planned restart at night: stay dark until touched

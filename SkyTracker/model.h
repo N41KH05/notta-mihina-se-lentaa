@@ -43,6 +43,17 @@ struct FirmwareUpdate {
   char error[64] = "";
 };
 inline FirmwareUpdate fwUpdate;
+// The micro SD card (in the slot on the back of the board). Checked at start-up and
+// written to once a minute, so a bad card or a clash with the screen shows up early.
+enum SdState : uint8_t { SD_NONE = 0, SD_OK, SD_FAILED };
+struct SdStatus {
+  SdState state;
+  uint32_t totalMB, freeMB;
+  uint32_t writes;           // successful writes since start-up
+  char error[48];
+};
+inline SdStatus sdStatus;
+
 enum DarkMode : uint8_t { DARK_OFF = 0, DARK_ON = 1, DARK_AUTO = 2 };
 
 // The sun's height above the horizon in degrees at a place and time (Unix seconds).

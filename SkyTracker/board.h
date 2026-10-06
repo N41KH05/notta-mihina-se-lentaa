@@ -12,4 +12,7 @@ void boardBacklight(bool on);
 // Needed after flash writes (updates): a plain restart could leave the picture streaked.
 [[noreturn]] void boardHardRestart();
 
-int boardTouch(TouchPt* pts, int max);   // current touch points (0 = none)
+int boardTouch(TouchPt* pts, int max);
+// Mount the micro SD card (SPI on GPIO 11-13; its chip select is on the I/O expander).
+// Call once from setup(), before the touch task starts. False: no card, or unreadable.
+bool boardSdBegin();   // current touch points (0 = none)
