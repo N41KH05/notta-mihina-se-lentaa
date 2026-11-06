@@ -18,14 +18,14 @@ import sys
 
 from OCP.BRep import BRep_Builder
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
-from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon, BRepBuilderAPI_Transform
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakePrism
 from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
 from OCP.StlAPI import StlAPI_Writer
 from OCP.TopoDS import TopoDS_Compound
-from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt, gp_Vec
+from OCP.gp import gp_Ax1, gp_Ax2, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
 
 
 # ---- small helpers ---------------------------------------------------------------
@@ -174,7 +174,12 @@ def write_step(shape, path):
     w.Transfer(shape, STEPControl_AsIs)
     w.Write(path)
 
-def write_stl(shape, path):
+def write_stl(shape, path, tilt):
+    # The STLs are written the way the parts are printed, so a slicer drops them on the
+    # plate the right way up: the model's y axis (front to back) becomes vertical.
+    t = gp_Trsf()
+    t.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(1, 0, 0)), math.radians(tilt))
+    shape = BRepBuilderAPI_Transform(shape, t, True).Shape()
     BRepMesh_IncrementalMesh(shape, 0.05, False, 0.3, True)
     StlAPI_Writer().Write(shape, path)
 
@@ -184,8 +189,10 @@ os.makedirs(os.path.join(out, "stl"), exist_ok=True)
 os.makedirs(os.path.join(out, "step"), exist_ok=True)
 
 parts = {"frame": frame, "back": back, "leg": leg}
+# print orientation: frame bezel face down, back plate and leg outside face down
+tilts = {"frame": 90, "back": -90, "leg": -90}
 for name, shape in parts.items():
-    write_stl(shape, os.path.join(out, "stl", name + ".stl"))
+    write_stl(shape, os.path.join(out, "stl", name + ".stl"), tilts[name])
 
 everything = TopoDS_Compound()
 builder = BRep_Builder()

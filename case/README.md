@@ -26,6 +26,8 @@ The dimensions come from Waveshare's drawing and 3D model of the board. Before p
 | Back plate | `stl/back.stl` | outside face down |
 | Kickstand | `stl/leg.stl` | flat side down |
 
+The STL files are already the right way up, so don't rotate them in the slicer. (The STEP file has the parts assembled, standing up; printed like that, the frame would need supports everywhere.)
+
 No supports needed. The hinge blocks on the frame have 45° slopes under them, and the floor of the USB tub bridges 40 mm, which PETG handles fine.
 
 The frame needs a bed of about 215 × 130 mm. I'd use PETG so it doesn't soften in a sunny window. 0.2 mm layers, 3 walls and 20–25 % infill are plenty, and the three parts come to roughly 110–130 g of filament.
